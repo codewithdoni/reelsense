@@ -12,9 +12,11 @@
 // content.
 
 const SETTLE_MS = 2500;      // let the page's own requests land
-const SCROLL_PAUSE_MS = 2200; // roughly how long a person looks at a screenful
-const MAX_SCROLLS = 6;
+const SCROLL_PAUSE_MS = 1800; // roughly how long a person looks at a screenful
+const MAX_SCROLLS = 8;        // per competitor on a sweep
+const OWN_MAX_SCROLLS = 40;   // your own profile is worth reading to the end
 const PER_PROFILE_TIMEOUT_MS = 45_000;
+const OWN_TIMEOUT_MS = 150_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -61,10 +63,11 @@ export class Crawler {
   }
 
   /** Open one profile, scroll it until it stops producing new reels, close it. */
-  async visit(username) {
+  async visit(username, opts = {}) {
+    const maxScrolls = opts.maxScrolls ?? MAX_SCROLLS;
     const before = this.reelCount(username);
     let tab;
-    const deadline = Date.now() + PER_PROFILE_TIMEOUT_MS;
+    const deadline = Date.now() + (opts.timeoutMs ?? PER_PROFILE_TIMEOUT_MS);
 
     try {
       tab = await chrome.tabs.create({
@@ -76,17 +79,18 @@ export class Crawler {
       let stagnant = 0;
       let seen = this.reelCount(username);
 
-      for (let i = 0; i < MAX_SCROLLS && !this.cancelled && Date.now() < deadline; i++) {
+      for (let i = 0; i < maxScrolls && !this.cancelled && Date.now() < deadline; i++) {
         await this.scrollTab(tab.id);
         await sleep(SCROLL_PAUSE_MS);
 
         const now = this.reelCount(username);
         this.publish({ current: { username, reels: now } });
 
-        // Two quiet scrolls in a row means the feed is exhausted or blocked;
-        // there is nothing to gain by scrolling into the void.
+        // Three quiet scrolls in a row means the feed is exhausted or blocked;
+        // there is nothing to gain by scrolling into the void. Three rather
+        // than two because Instagram's pagination stalls for a beat mid-feed.
         if (now === seen) {
-          if (++stagnant >= 2) break;
+          if (++stagnant >= 3) break;
         } else {
           stagnant = 0;
           seen = now;
@@ -104,6 +108,21 @@ export class Crawler {
         }
       }
     }
+  }
+
+  /** Read the creator's own profile to the end, so analysis sees every reel. */
+  async collectOwn(username) {
+    if (this.running) return { username, reels: this.reelCount(username), busy: true };
+    this.running = true;
+    this.cancelled = false;
+    this.publish({ running: true, queue: [username], done: [], current: { username, reels: this.reelCount(username) } });
+    const result = await this.visit(username, {
+      maxScrolls: OWN_MAX_SCROLLS,
+      timeoutMs: OWN_TIMEOUT_MS,
+    });
+    this.running = false;
+    this.publish({ running: false, current: null, done: [result] });
+    return result;
   }
 
   /** @param {string[]} usernames */

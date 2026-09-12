@@ -147,30 +147,58 @@ function mergeProfile(prev, next) {
   return out;
 }
 
-const askedFor = new Set();
+const inFlight = new Set();
+
+function askTab(tabId, message) {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, message, (res) =>
+        resolve(chrome.runtime.lastError ? null : res)
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function anyInstagramTab() {
+  const tabs = await chrome.tabs.query({ url: "https://www.instagram.com/*" });
+  return tabs[0]?.id ?? null;
+}
 
 /**
  * Instagram server-renders the profile page, embedding the initial data in the
  * HTML, so simply opening a profile produces no request to read. Ask the page
  * to fetch the same JSON once, from its own origin and session.
+ *
+ * Retried because the content script may not have registered its listener yet
+ * when a navigation lands, and a silent miss here shows up much later as a
+ * profile with no follower count.
  */
 async function ensureProfile(username, tabId) {
-  if (!username || askedFor.has(username)) return;
+  if (!username || inFlight.has(username)) return false;
   await ready;
-  if (store.profiles[username]?.profile?.followers) return;
-  askedFor.add(username);
+  if (store.profiles[username]?.profile?.followers) return true;
 
-  chrome.tabs.sendMessage(tabId, { type: "FETCH_PROFILE", username }, (res) => {
-    if (chrome.runtime.lastError || !res?.ok) {
-      askedFor.delete(username);
-      return;
+  inFlight.add(username);
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const target = tabId ?? (await anyInstagramTab());
+      if (target) {
+        const res = await askTab(target, { type: "FETCH_PROFILE", username });
+        if (res?.ok) {
+          ingest("web_profile_info", res.body, target);
+          console.info("[ReelSense] profile fetched for", username);
+          return true;
+        }
+        if (res?.error) console.info("[ReelSense] profile fetch:", username, res.error);
+      }
+      await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
     }
-    try {
-      ingest("web_profile_info", res.body, tabId);
-    } catch (e) {
-      console.warn("[ReelSense] profile fallback ingest failed", e);
-    }
-  });
+    return false;
+  } finally {
+    inFlight.delete(username);
+  }
 }
 
 function setMe(username) {
@@ -253,6 +281,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg?.type === "SET_WATCH") {
     setWatch(msg.patch).then((w) => sendResponse({ ok: true, watch: w }));
+    return true;
+  }
+
+  if (msg?.type === "COLLECT_PROFILE") {
+    (async () => {
+      const username = msg.username || me;
+      if (!username) return sendResponse({ ok: false, error: "Username noma'lum" });
+      sendResponse({ ok: true, started: username });
+      // Fill in the profile header and read the reels feed to the end, so the
+      // creator never has to scroll their own account by hand.
+      await ensureProfile(username, null);
+      await crawler.collectOwn(username);
+      await ensureProfile(username, null);
+      chrome.runtime.sendMessage(
+        { type: "COLLECT_DONE", username, reels: Object.keys(store.profiles[username]?.reels || {}).length },
+        () => void chrome.runtime.lastError
+      );
+    })();
     return true;
   }
 

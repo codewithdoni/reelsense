@@ -70,6 +70,23 @@ function bg(msg) {
   return new Promise((resolve) => chrome.runtime.sendMessage(msg, resolve));
 }
 
+/** Resolve when the service worker broadcasts `type`, or reject on timeout. */
+function waitFor(type, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.runtime.onMessage.removeListener(handler);
+      reject(new Error(`${type} kutish vaqti tugadi`));
+    }, timeoutMs);
+    function handler(msg) {
+      if (msg?.type !== type) return;
+      clearTimeout(timer);
+      chrome.runtime.onMessage.removeListener(handler);
+      resolve(msg);
+    }
+    chrome.runtime.onMessage.addListener(handler);
+  });
+}
+
 // --- state -----------------------------------------------------------------
 
 async function refresh(rerender = true) {
@@ -152,7 +169,8 @@ function renderProfile() {
     }
     <button class="primary" id="run" ${subject ? "" : "disabled"}>Profilni tahlil qilish</button>
     <div class="small muted" style="margin-top:8px">
-      Reels tabini bir-ikki marta pastga aylantiring — qancha ko'p reel yig'ilsa, tahlil shuncha aniq.
+      Agent avval profilingizni fon tabida oxirigacha o'qiydi, keyin tahlil qiladi.
+      Siz hech narsa aylantirishingiz shart emas.
     </div>`;
 
   el("setme")?.addEventListener("click", async () => {
@@ -161,18 +179,33 @@ function renderProfile() {
   });
 
   el("run")?.addEventListener("click", async () => {
+    // Collect first: the analysis is only as good as the reels captured, and
+    // asking a creator to hand-scroll their own account is work the agent can
+    // do itself.
+    loading(v, "Agent profilingizni oxirigacha o'qiyapti…");
+    status("reellar yig'ilmoqda…", true);
+    try {
+      await bg({ type: "COLLECT_PROFILE", username: subject.username });
+      await waitFor("COLLECT_DONE", 160_000);
+      await refresh(false);
+    } catch {
+      status("yig'ish tugamadi — mavjud ma'lumot bilan davom etilmoqda");
+    }
+
+    const fresh = (state.me && state.me === subject.username ? state.mine : state.target) || subject;
+
     loading(v, "Profil tahlil qilinmoqda…");
     status("profil tahlili…", true);
     try {
       const rep = await api("/analyze/profile", {
-        profile: subject.profile,
-        reels: subject.reels,
+        profile: fresh.profile || subject.profile,
+        reels: fresh.reels?.length ? fresh.reels : subject.reels,
         lang: lang(),
       });
       cache.profileReport = rep;
       cache.profileReportFor = subject.username;
-      paintProfileReport(rep, subject);
-      status("profil tahlili tayyor");
+      paintProfileReport(rep, fresh);
+      status(`profil tahlili tayyor · ${rep.metrics?.reel_count ?? 0} reel asosida`);
     } catch (e) {
       failure(v, e);
       status("xato");
@@ -901,9 +934,13 @@ chrome.runtime.onMessage.addListener((msg) => {
     // More reels captured. Refresh the counters, but never wipe a rendered report
     // or a half-filled automation form out from under the user.
     refresh(false);
-  } else if (msg?.type === "CRAWL_PROGRESS" || msg?.type === "DIGEST_READY") {
+  } else if (msg?.type === "CRAWL_PROGRESS") {
     if (activeTab === "competitor") renderCompetitor();
-    if (msg.type === "DIGEST_READY") status("kunlik xulosa tayyor");
+    const cur = msg.crawl?.current;
+    if (cur) status(`@${cur.username} o'qilmoqda — ${cur.reels} reel`, true);
+  } else if (msg?.type === "DIGEST_READY") {
+    if (activeTab === "competitor") renderCompetitor();
+    status("kunlik xulosa tayyor");
   }
 });
 
