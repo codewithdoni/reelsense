@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ReelSense</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <strong>ReelSense</strong>
+      </div>
+      <div class="lang">
+        <select id="lang" title="Script language">
+          <option value="uz">O'zbek</option>
+          <option value="ru">Русский</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+    </header>
+
+    <div id="ctxbar" class="ctxbar">
+      <div class="ctx-main">Instagram sahifasini oching…</div>
+      <div class="ctx-sub"></div>
+    </div>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="profile">Profil</button>
+      <button class="tab" data-tab="reel">Reel</button>
+      <button class="tab" data-tab="competitor">Raqobatchi</button>
+      <button class="tab" data-tab="ideas">G'oyalar</button>
+      <button class="tab" data-tab="auto">Avtomatika</button>
+    </nav>
+
+    <main id="views">
+      <section class="view active" id="view-profile"></section>
+      <section class="view" id="view-reel"></section>
+      <section class="view" id="view-competitor"></section>
+      <section class="view" id="view-ideas"></section>
+      <section class="view" id="view-auto"></section>
+    </main>
+
+    <footer class="statusbar"><span id="status">tayyor</span></footer>
+
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>

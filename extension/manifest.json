@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "ReelSense — AI social media manager inside Instagram",
+  "version": "0.1.0",
+  "description": "Analyzes your profile, competitors and viral reels from inside instagram.com, writes scripts in your voice, and runs comment-to-DM automations.",
+  "permissions": ["sidePanel", "storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://www.instagram.com/*",
+    "https://*.cdninstagram.com/*",
+    "https://*.fbcdn.net/*",
+    "http://localhost:8000/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/panel/panel.html"
+  },
+  "action": {
+    "default_title": "Open ReelSense"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["src/interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}
