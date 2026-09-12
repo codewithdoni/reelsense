@@ -75,7 +75,7 @@ function waitFor(type, timeoutMs) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.runtime.onMessage.removeListener(handler);
-      reject(new Error(`${type} kutish vaqti tugadi`));
+      reject(new Error(`${type} timed out`));
     }, timeoutMs);
     function handler(msg) {
       if (msg?.type !== type) return;
@@ -100,7 +100,7 @@ async function refresh(rerender = true) {
   // showing an empty panel that looks broken.
   if (state.stale && Date.now() - healedAt > 20_000) {
     healedAt = Date.now();
-    status("sahifa yangilanmoqda…", true);
+    status("refreshing the page…", true);
     await bg({ type: "REFRESH_TABS" });
   }
 
@@ -112,15 +112,15 @@ function renderCtx() {
   const c = state.context || { kind: "other" };
   const t = state.target;
   const st = state.stats || {};
-  let main = "Instagram sahifasini oching…";
+  let main = "Open an Instagram page…";
 
   if (c.kind === "profile") {
     const isMe = state.me && c.username === state.me;
-    main = `@${c.username}${isMe ? " (siz)" : ""}`;
+    main = `@${c.username}${isMe ? " (you)" : ""}`;
   } else if (c.kind === "reel") {
     main = t ? `Reel · @${t.username}` : `Reel ${c.code}`;
   } else if (c.kind === "feed") {
-    main = { reels: "Reels lentasi", explore: "Explore", home: "Bosh lenta" }[c.source] || "Lenta";
+    main = { reels: "Reels feed", explore: "Explore", home: "Home feed" }[c.source] || "Feed";
   } else if (c.kind === "dashboard") {
     main = "Professional Dashboard";
   }
@@ -129,12 +129,12 @@ function renderCtx() {
   // intercepted" from "intercepted but this page has nothing to offer".
   const tot = state.totals || { reels: 0, profiles: 0 };
   const sub = state.stale
-    ? "sahifa yangilanmoqda…"
+    ? "refreshing the page…"
     : st.payloads
-    ? `${tot.reels} reel · ${tot.profiles} profil yig'ildi · ${st.payloads} so'rov o'qildi`
+    ? `${tot.reels} reels · ${tot.profiles} profiles captured · ${st.payloads} responses read`
     : state.onInstagram
-    ? "aylantiring — ma'lumot yig'ila boshlaydi"
-    : "Instagram'ni oching";
+    ? "scroll — capture starts as the page loads"
+    : "Open Instagram";
 
   $(".ctx-main").textContent = main;
   $(".ctx-sub").textContent = sub;
@@ -147,7 +147,7 @@ function loading(view, text) {
 }
 function failure(view, e) {
   el(view).innerHTML = `<div class="card"><div class="err">${esc(e.message || e)}</div>
-    <div class="small muted" style="margin-top:8px">Backend ishlayaptimi? <code>uvicorn app.main:app</code></div></div>`;
+    <div class="small muted" style="margin-top:8px">Is the backend running? <code>uvicorn app.main:app</code></div></div>`;
 }
 function listHtml(items) {
   if (!items?.length) return "";
@@ -167,7 +167,7 @@ function renderProfile() {
   }
 
   if (!onProfile && !state.mine) {
-    el(v).innerHTML = `<div class="empty">Instagram'da <b>o'z profilingizni</b> oching,<br>so'ng "Profilni tahlil qilish" tugmasini bosing.</div>`;
+    el(v).innerHTML = `<div class="empty">Open <b>your own profile</b> on Instagram,<br>then press "Analyze profile".</div>`;
     return;
   }
 
@@ -178,15 +178,15 @@ function renderProfile() {
     ${subject ? profileHead(subject, isMe) : ""}
     ${
       subject && !isMe
-        ? `<div class="card small muted">Bu sizning profilingiz emas.
-             <button class="ghost tiny" id="setme">Bu menman</button> yoki
-             <b>Raqobatchi</b> tabiga o'ting.</div>`
+        ? `<div class="card small muted">This is not your account.
+             <button class="ghost tiny" id="setme">This is me</button> or use the
+             <b>Competitor</b> tab.</div>`
         : ""
     }
-    <button class="primary" id="run" ${subject ? "" : "disabled"}>Profilni tahlil qilish</button>
+    <button class="primary" id="run" ${subject ? "" : "disabled"}>Analyze profile</button>
     <div class="small muted" style="margin-top:8px">
-      Agent avval profilingizni fon tabida oxirigacha o'qiydi, keyin tahlil qiladi.
-      Siz hech narsa aylantirishingiz shart emas.
+      The agent reads your profile to the end in a background tab first, then analyzes it.
+      You do not have to scroll anything.
     </div>`;
 
   el("setme")?.addEventListener("click", async () => {
@@ -198,20 +198,20 @@ function renderProfile() {
     // Collect first: the analysis is only as good as the reels captured, and
     // asking a creator to hand-scroll their own account is work the agent can
     // do itself.
-    loading(v, "Agent profilingizni oxirigacha o'qiyapti…");
-    status("reellar yig'ilmoqda…", true);
+    loading(v, "The agent is reading your profile to the end…");
+    status("capturing reels…", true);
     try {
       await bg({ type: "COLLECT_PROFILE", username: subject.username });
       await waitFor("COLLECT_DONE", 160_000);
       await refresh(false);
     } catch {
-      status("yig'ish tugamadi — mavjud ma'lumot bilan davom etilmoqda");
+      status("capture did not finish — continuing with what was collected");
     }
 
     const fresh = (state.me && state.me === subject.username ? state.mine : state.target) || subject;
 
-    loading(v, "Profil tahlil qilinmoqda…");
-    status("profil tahlili…", true);
+    loading(v, "Analyzing the profile…");
+    status("profile analysis…", true);
     try {
       const rep = await api("/analyze/profile", {
         // Follower counts are a nice-to-have; the reels are the analysis. Never
@@ -223,10 +223,10 @@ function renderProfile() {
       cache.profileReport = rep;
       cache.profileReportFor = subject.username;
       paintProfileReport(rep, fresh);
-      status(`profil tahlili tayyor · ${rep.metrics?.reel_count ?? 0} reel asosida`);
+      status(`profile analysis ready · ${rep.metrics?.reel_count ?? 0} reels`);
     } catch (e) {
       failure(v, e);
-      status("xato");
+      status("error");
     }
   });
 }
@@ -234,11 +234,11 @@ function renderProfile() {
 function profileHead(s, isMe) {
   const p = s.profile || {};
   return `<div class="card">
-    <h4>@${esc(s.username)} ${isMe ? '<span class="badge good">siz</span>' : ""}</h4>
+    <h4>@${esc(s.username)} ${isMe ? '<span class="badge good">you</span>' : ""}</h4>
     <div class="stats">
-      <div class="stat"><b>${fmt(p.followers)}</b><span>obunachi</span></div>
-      <div class="stat"><b>${fmt(p.media_count)}</b><span>post</span></div>
-      <div class="stat"><b>${s.reel_count}</b><span>reel yig'ildi</span></div>
+      <div class="stat"><b>${fmt(p.followers)}</b><span>followers</span></div>
+      <div class="stat"><b>${fmt(p.media_count)}</b><span>posts</span></div>
+      <div class="stat"><b>${s.reel_count}</b><span>reels captured</span></div>
     </div>
     ${p.biography ? `<div class="small muted">${esc(p.biography.slice(0, 160))}</div>` : ""}
   </div>`;
@@ -249,27 +249,27 @@ function paintProfileReport(r, subject) {
   el("view-profile").innerHTML = `
     ${subject ? profileHead(subject, true) : ""}
     <div class="stats">
-      <div class="stat"><b>${r.score ?? "—"}/100</b><span>profil ball</span></div>
-      <div class="stat"><b>${fmt(m.median_views)}</b><span>median ko'rish</span></div>
+      <div class="stat"><b>${r.score ?? "—"}/100</b><span>profile score</span></div>
+      <div class="stat"><b>${fmt(m.median_views)}</b><span>median views</span></div>
       <div class="stat"><b>${m.engagement_rate != null ? m.engagement_rate.toFixed(1) + "%" : "—"}</b><span>engagement</span></div>
     </div>
 
     <div class="card">
-      <h4>Nishа va ovoz</h4>
-      <div class="kv"><span>Nishа</span><span>${esc(r.niche || "—")}</span></div>
+      <h4>Niche and voice</h4>
+      <div class="kv"><span>Niche</span><span>${esc(r.niche || "—")}</span></div>
       <div class="small" style="margin-top:6px">${esc(r.voice || "")}</div>
     </div>
 
-    <div class="card"><h4>Kontent ustunlari</h4>${listHtml(r.pillars)}</div>
-    <div class="card"><h4>Nima ishlayapti <span class="badge good">kuchli</span></h4>${listHtml(r.what_works)}</div>
-    <div class="card"><h4>Nima ishlamayapti</h4>${listHtml(r.what_fails)}</div>
+    <div class="card"><h4>Content pillars</h4>${listHtml(r.pillars)}</div>
+    <div class="card"><h4>What works <span class="badge good">strong</span></h4>${listHtml(r.what_works)}</div>
+    <div class="card"><h4>What does not</h4>${listHtml(r.what_fails)}</div>
     <div class="card">
-      <h4>Chiqarish ritmi</h4>
+      <h4>Posting rhythm</h4>
       <div class="small">${esc(r.cadence || "—")}</div>
     </div>
-    <div class="card"><h4>3 ta aniq tavsiya</h4>${listHtml(r.recommendations)}</div>
+    <div class="card"><h4>Three specific actions</h4>${listHtml(r.recommendations)}</div>
 
-    <button class="primary" id="toideas">Shu tahlil asosida g'oyalar →</button>`;
+    <button class="primary" id="toideas">Turn this into ideas →</button>`;
 
   el("toideas")?.addEventListener("click", () => switchTab("ideas", true));
 }
@@ -295,18 +295,18 @@ function renderReel() {
   if (!code) {
     const list = state.recent || [];
     if (!list.length) {
-      el(v).innerHTML = `<div class="empty">Reels lentasini aylantiring yoki biror reelni oching —<br>ko'rilgan reellar shu yerda to'planadi.</div>`;
+      el(v).innerHTML = `<div class="empty">Scroll the reels feed or open a reel —<br>everything that passes by is kept here.</div>`;
       return;
     }
     el(v).innerHTML =
-      `<div class="small muted" style="margin-bottom:9px">Aylantirish davomida ${list.length} ta reel yig'ildi. Birini tanlang:</div>` +
+      `<div class="small muted" style="margin-bottom:9px">Aylantirish davomida ${list.length} ta reels captured. Birini tanlang:</div>` +
       list
         .map(
           (r) => `<div class="card pick" data-code="${esc(r.code)}" style="cursor:pointer">
             <h4>@${esc(r.username || "—")}
               <span class="badge">${r.views ? fmt(r.views) + " ko'rish" : fmt(r.likes) + " like"}</span>
             </h4>
-            <div class="small muted">${esc((r.caption || "(caption yo'q)").slice(0, 90))}</div>
+            <div class="small muted">${esc((r.caption || "(no caption)").slice(0, 90))}</div>
           </div>`
         )
         .join("");
@@ -323,13 +323,13 @@ function renderReel() {
   const cached = cache["reel:" + code];
   if (cached) return paintReel(cached, reel, code);
 
-  const back = c.kind === "reel" ? "" : `<button class="ghost tiny" id="back">← ro'yxat</button>`;
+  const back = c.kind === "reel" ? "" : `<button class="ghost tiny" id="back">← back</button>`;
   el(v).innerHTML = `
     ${back}
-    ${reel ? reelHead(reel) : `<div class="card small muted">Reel metadatasi hali yig'ilmadi — sahifani yangilang.</div>`}
-    <button class="primary" id="dec">Bu reelni dekodlash</button>
+    ${reel ? reelHead(reel) : `<div class="card small muted">No reel metadata captured yet — refresh the page.</div>`}
+    <button class="primary" id="dec">Decode this reel</button>
     <div class="small muted" style="margin-top:8px">
-      Video ko'riladi va eshitiladi: hook, struktura, ekran matni, temp va CTA ajratiladi.
+      The video is watched and heard: hook, structure, on-screen text, pacing and CTA.
     </div>`;
 
   el("back")?.addEventListener("click", () => {
@@ -338,8 +338,8 @@ function renderReel() {
   });
 
   el("dec")?.addEventListener("click", async () => {
-    loading(v, "Video ko'rilmoqda va tahlil qilinmoqda…");
-    status("reel dekodlanmoqda…", true);
+    loading(v, "Watching and analyzing the video…");
+    status("decoding the reel…", true);
     try {
       let videoB64 = null;
       if (reel?.video_url) {
@@ -355,10 +355,10 @@ function renderReel() {
       });
       cache["reel:" + code] = rep;
       paintReel(rep, reel, code);
-      status("reel dekodlandi" + (rep.saw_video ? " (video ko'rildi)" : " (metadata rejimi)"));
+      status("reel decoded" + (rep.saw_video ? " (video watched)" : " (metadata only)"));
     } catch (e) {
       failure(v, e);
-      status("xato");
+      status("error");
     }
   });
 }
@@ -367,9 +367,9 @@ function reelHead(r) {
   return `<div class="card">
     <h4>@${esc(r.username || "—")} <span class="badge">${r.duration ? Math.round(r.duration) + "s" : "reel"}</span></h4>
     <div class="stats">
-      <div class="stat"><b>${fmt(r.views)}</b><span>ko'rish</span></div>
-      <div class="stat"><b>${fmt(r.likes)}</b><span>like</span></div>
-      <div class="stat"><b>${fmt(r.comments)}</b><span>izoh</span></div>
+      <div class="stat"><b>${fmt(r.views)}</b><span>views</span></div>
+      <div class="stat"><b>${fmt(r.likes)}</b><span>likes</span></div>
+      <div class="stat"><b>${fmt(r.comments)}</b><span>comments</span></div>
     </div>
     ${r.caption ? `<div class="small muted">${esc(r.caption.slice(0, 180))}</div>` : ""}
   </div>`;
@@ -377,32 +377,32 @@ function reelHead(r) {
 
 function paintReel(rep, reel, code) {
   el("view-reel").innerHTML = `
-    ${selectedCode ? `<button class="ghost tiny" id="back2">← ro'yxat</button>` : ""}
+    ${selectedCode ? `<button class="ghost tiny" id="back2">← back</button>` : ""}
     ${reel ? reelHead(reel) : ""}
     <div class="card">
       <h4>Hook (0–3s) <span class="badge ${rep.hook_score >= 7 ? "good" : "hot"}">${rep.hook_score ?? "—"}/10</span></h4>
       <div class="small">${esc(rep.hook || "")}</div>
-      ${rep.hook_type ? `<div class="small muted" style="margin-top:5px">Tur: ${esc(rep.hook_type)}</div>` : ""}
+      ${rep.hook_type ? `<div class="small muted" style="margin-top:5px">Type: ${esc(rep.hook_type)}</div>` : ""}
     </div>
-    <div class="card"><h4>Struktura</h4>${listHtml(rep.structure)}</div>
-    ${rep.on_screen_text?.length ? `<div class="card"><h4>Ekrandagi matn</h4>${listHtml(rep.on_screen_text)}</div>` : ""}
-    <div class="card"><h4>Nega ishlagan</h4>${listHtml(rep.why_it_works)}</div>
+    <div class="card"><h4>Structure</h4>${listHtml(rep.structure)}</div>
+    ${rep.on_screen_text?.length ? `<div class="card"><h4>On-screen text</h4>${listHtml(rep.on_screen_text)}</div>` : ""}
+    <div class="card"><h4>Why it works</h4>${listHtml(rep.why_it_works)}</div>
     ${
       rep.audience_questions?.length
-        ? `<div class="card"><h4>Izohlardagi savollar</h4>${listHtml(rep.audience_questions)}</div>`
+        ? `<div class="card"><h4>Questions in the comments</h4>${listHtml(rep.audience_questions)}</div>`
         : ""
     }
-    ${rep.transcript ? `<div class="card"><h4>Transkript</h4><pre class="script">${esc(rep.transcript)}</pre></div>` : ""}
+    ${rep.transcript ? `<div class="card"><h4>Transcript</h4><pre class="script">${esc(rep.transcript)}</pre></div>` : ""}
     <div class="card">
-      <h4>Siz uchun qayta ishlangan ssenariy
-        <button class="ghost tiny" id="copy">Nusxa</button>
+      <h4>Rewritten for you
+        <button class="ghost tiny" id="copy">Copy</button>
       </h4>
       <pre class="script" id="rs">${esc(rep.remake_script || "")}</pre>
     </div>`;
 
   el("copy")?.addEventListener("click", () => {
     navigator.clipboard.writeText(rep.remake_script || "");
-    status("ssenariy nusxalandi");
+    status("script copied");
   });
   el("back2")?.addEventListener("click", () => {
     selectedCode = null;
@@ -419,7 +419,7 @@ async function renderCompetitor() {
   const t = state.target;
 
   if (!state.me) {
-    el(v).innerHTML = `<div class="empty">Avval <b>Profil</b> tabida o'z akkauntingizni belgilang.</div>`;
+    el(v).innerHTML = `<div class="empty">Set your own account in the <b>Profile</b> tab first.</div>`;
     return;
   }
   if (c.kind !== "profile" || c.username === state.me) {
@@ -433,24 +433,24 @@ async function renderCompetitor() {
 
   el(v).innerHTML = `
     ${t ? profileHead(t, false) : ""}
-    <button class="primary" id="cmp" ${t && state.mine ? "" : "disabled"}>@${esc(c.username)} bilan solishtirish</button>
+    <button class="primary" id="cmp" ${t && state.mine ? "" : "disabled"}>@${esc(c.username)} — compare</button>
     <div class="row end" style="margin-top:7px">
-      <button class="ghost tiny" id="addwatch">+ kuzatuv ro'yxatiga</button>
+      <button class="ghost tiny" id="addwatch">+ add to watchlist</button>
     </div>
     <div class="small muted" style="margin-top:8px">
-      Uning Reels tabini aylantiring — breakout (median×3) reellari aniqlanadi va format shabloni ajratiladi.
+      Scroll their Reels tab — breakout reels (median × 3) are detected and their format template extracted.
     </div>`;
 
   el("addwatch")?.addEventListener("click", async () => {
     const w = (await bg({ type: "GET_WATCH" })).watch;
     const names = [...new Set([...w.usernames, c.username])];
     await bg({ type: "SET_WATCH", patch: { usernames: names } });
-    status(`@${c.username} kuzatuv ro'yxatiga qo'shildi`);
+    status(`@${c.username} added to the watchlist`);
   });
 
   el("cmp")?.addEventListener("click", async () => {
-    loading(v, "Raqobatchi tahlil qilinmoqda…");
-    status("raqobatchi tahlili…", true);
+    loading(v, "Analyzing the competitor…");
+    status("competitor analysis…", true);
     try {
       const rep = await api("/compare", {
         me: { profile: state.mine.profile, reels: state.mine.reels },
@@ -460,10 +460,10 @@ async function renderCompetitor() {
       });
       cache["cmp:" + c.username] = rep;
       paintCompetitor(rep, c.username);
-      status("solishtirish tayyor");
+      status("comparison ready");
     } catch (e) {
       failure(v, e);
-      status("xato");
+      status("error");
     }
   });
 }
@@ -476,17 +476,17 @@ async function watchlistHtml() {
 
   const progress = crawl?.running
     ? `<div class="card">
-         <h4><span class="spin"></span> Agent ishlayapti</h4>
-         <div class="small">Hozir: <b>@${esc(crawl.current?.username || "…")}</b> —
-           ${crawl.current?.reels ?? 0} reel yig'ildi</div>
+         <h4><span class="spin"></span> Agent running</h4>
+         <div class="small">Now: <b>@${esc(crawl.current?.username || "…")}</b> —
+           ${crawl.current?.reels ?? 0} reels captured</div>
          <div class="small muted" style="margin-top:4px">
-           Tugadi: ${crawl.done?.length || 0} / ${(crawl.done?.length || 0) + (crawl.queue?.length || 0)}</div>
+           Done: ${crawl.done?.length || 0} / ${(crawl.done?.length || 0) + (crawl.queue?.length || 0)}</div>
          <div class="row end" style="margin-top:7px">
-           <button class="ghost tiny" id="cancelsweep">To'xtatish</button>
+           <button class="ghost tiny" id="cancelsweep">Stop</button>
          </div>
        </div>`
     : crawl?.done?.length
-    ? `<div class="card"><h4>Oxirgi yurish</h4>
+    ? `<div class="card"><h4>Last sweep</h4>
          ${crawl.done
            .map((d) => `<div class="kv"><span>@${esc(d.username)}</span><span>${d.reels} reel ${d.gained ? `(+${d.gained})` : ""}</span></div>`)
            .join("")}</div>`
@@ -494,14 +494,14 @@ async function watchlistHtml() {
 
   const digestHtml = digest?.competitors?.length
     ? `<div class="card">
-         <h4>Kunlik xulosa <span class="badge">${new Date(digest.at).toLocaleString()}</span></h4>
+         <h4>Daily digest <span class="badge">${new Date(digest.at).toLocaleString()}</span></h4>
          ${digest.competitors
            .map((cmp) => {
              const steal = cmp.report?.steal_these?.[0];
              return `<div style="margin-bottom:9px">
                <div style="font-weight:600;font-size:12px">@${esc(cmp.username)} · ${cmp.reels} reel</div>
-               ${cmp.report?.gaps?.[0] ? `<div class="small muted">Bo'shliq: ${esc(cmp.report.gaps[0].slice(0, 130))}</div>` : ""}
-               ${steal ? `<div class="small">O'zlashtiring: ${esc(steal.format.slice(0, 110))}</div>` : ""}
+               ${cmp.report?.gaps?.[0] ? `<div class="small muted">Gap: ${esc(cmp.report.gaps[0].slice(0, 130))}</div>` : ""}
+               ${steal ? `<div class="small">Steal: ${esc(steal.format.slice(0, 110))}</div>` : ""}
              </div>`;
            })
            .join("")}
@@ -510,25 +510,25 @@ async function watchlistHtml() {
 
   return `
     <div class="card">
-      <h4>Raqobatchilar ro'yxati</h4>
-      <div class="small muted">Agent har birining profiliga o'zi kiradi, Reels tabini aylantiradi va ma'lumotni yig'adi.</div>
-      <label class="f">Har qatorga bitta username</label>
+      <h4>Watchlist</h4>
+      <div class="small muted">The agent opens each profile itself, scrolls the Reels tab and captures the data.</div>
+      <label class="f">One username per line</label>
       <textarea class="f" id="wl" placeholder="sport.hamrohingiz&#10;another_account">${esc((watch.usernames || []).join("\n"))}</textarea>
       <div style="height:8px"></div>
-      <button class="primary" id="sweep">Hozir tahlil qilish</button>
+      <button class="primary" id="sweep">Run now</button>
     </div>
 
     <div class="card">
-      <h4>Har kuni avtomatik</h4>
+      <h4>Every day, automatically</h4>
       <div class="row" style="gap:8px;align-items:center">
         <input class="f" id="wtime" type="time" style="width:auto"
                value="${String(watch.hour).padStart(2, "0")}:${String(watch.minute).padStart(2, "0")}" />
         <label class="small" style="display:flex;gap:6px;align-items:center;margin:0">
-          <input type="checkbox" id="wen" ${watch.enabled ? "checked" : ""} /> yoqilgan
+          <input type="checkbox" id="wen" ${watch.enabled ? "checked" : ""} /> enabled
         </label>
       </div>
       <div class="small muted" style="margin-top:6px">
-        Belgilangan vaqtda agent ro'yxatni aylanib chiqadi va tayyor bo'lganda bildirishnoma yuboradi.
+        At the chosen time the agent sweeps the list and notifies you when the digest is ready.
       </div>
     </div>
 
@@ -537,10 +537,10 @@ async function watchlistHtml() {
 
     ${
       state.suggested?.length
-        ? `<div class="card"><h4>Instagram taklif qilgan o'xshash akkauntlar</h4>${listHtml(state.suggested)}</div>`
+        ? `<div class="card"><h4>Similar accounts Instagram suggests</h4>${listHtml(state.suggested)}</div>`
         : ""
     }
-    <div class="small muted">Bitta raqobatchini qo'lda solishtirish uchun uning profilini oching.</div>`;
+    <div class="small muted">To compare one competitor by hand, open their profile.</div>`;
 }
 
 async function wireWatchlist() {
@@ -559,24 +559,24 @@ async function wireWatchlist() {
   el("wl")?.addEventListener("change", save);
   el("wtime")?.addEventListener("change", async () => {
     await save();
-    status("jadval yangilandi");
+    status("schedule updated");
   });
   el("wen")?.addEventListener("change", async () => {
     const r = await save();
-    status(r.watch.enabled ? "kunlik tahlil yoqildi" : "kunlik tahlil o'chirildi");
+    status(r.watch.enabled ? "daily sweep enabled" : "daily sweep disabled");
   });
 
   el("sweep")?.addEventListener("click", async () => {
     await save();
     const r = await bg({ type: "RUN_SWEEP" });
-    if (!r?.ok) return status(r?.error || "xato");
-    status("agent raqobatchilarni aylanmoqda…", true);
+    if (!r?.ok) return status(r?.error || "error");
+    status("the agent is sweeping competitors…", true);
     renderCompetitor();
   });
 
   el("cancelsweep")?.addEventListener("click", async () => {
     await bg({ type: "CANCEL_SWEEP" });
-    status("to'xtatildi");
+    status("stopped");
   });
 }
 
@@ -593,15 +593,15 @@ function paintCompetitor(rep, who) {
 
   el("view-competitor").innerHTML = `
     <div class="card">
-      <h4>Siz vs @${esc(who)}</h4>
+      <h4>You vs @${esc(who)}</h4>
       <table class="cmp">
-        <tr><td class="muted small">ko'rsatkich</td><td class="muted small">siz</td><td class="muted small">@${esc(who)}</td></tr>
+        <tr><td class="muted small">metric</td><td class="muted small">you</td><td class="muted small">@${esc(who)}</td></tr>
         ${rows}
       </table>
     </div>
     ${
       rep.breakouts?.length
-        ? `<div class="card"><h4>Breakout reellari <span class="badge hot">median × 3</span></h4>
+        ? `<div class="card"><h4>Their breakout reels <span class="badge hot">median × 3</span></h4>
             ${rep.breakouts
               .map(
                 (b) => `<div class="kv"><span>${esc((b.caption || b.code).slice(0, 46))}</span><span>${fmt(b.views)}</span></div>`
@@ -609,11 +609,11 @@ function paintCompetitor(rep, who) {
               .join("")}</div>`
         : ""
     }
-    <div class="card"><h4>Ular nimada kuchli</h4>${listHtml(rep.they_win_at)}</div>
-    <div class="card"><h4>Siz nimada kuchlisiz</h4>${listHtml(rep.i_win_at)}</div>
-    <div class="card"><h4>Bo'sh joylar <span class="badge hot">imkoniyat</span></h4>${listHtml(rep.gaps)}</div>
+    <div class="card"><h4>Ular nimada strong</h4>${listHtml(rep.they_win_at)}</div>
+    <div class="card"><h4>Siz nimada strongsiz</h4>${listHtml(rep.i_win_at)}</div>
+    <div class="card"><h4>Gaps <span class="badge hot">opportunity</span></h4>${listHtml(rep.gaps)}</div>
     <div class="card">
-      <h4>O'zlashtiring: 5 format</h4>
+      <h4>Steal these five formats</h4>
       ${(rep.steal_these || [])
         .map(
           (s) => `<div style="margin-bottom:9px">
@@ -624,8 +624,8 @@ function paintCompetitor(rep, who) {
         )
         .join("")}
     </div>
-    ${rep.posting_advice ? `<div class="card"><h4>Ritm bo'yicha maslahat</h4><div class="small">${esc(rep.posting_advice)}</div></div>` : ""}
-    <button class="primary" id="toideas2">Shu tahlildan g'oyalar →</button>`;
+    ${rep.posting_advice ? `<div class="card"><h4>Posting advice</h4><div class="small">${esc(rep.posting_advice)}</div></div>` : ""}
+    <button class="primary" id="toideas2">Turn this into ideas →</button>`;
 
   cache.lastCompetitor = { who, report: rep };
   el("toideas2")?.addEventListener("click", () => switchTab("ideas", true));
@@ -638,21 +638,21 @@ function renderIdeas(force = false) {
   if (cache.ideas && !force) return paintIdeas(cache.ideas);
 
   if (!cache.profileReport) {
-    el(v).innerHTML = `<div class="empty">Avval <b>Profil</b> tabida tahlilni ishga tushiring —<br>g'oyalar sizning ovozingizga moslanadi.</div>`;
+    el(v).innerHTML = `<div class="empty">Run the analysis in the <b>Profile</b> tab first —<br>ideas are written in your voice.</div>`;
     return;
   }
 
   el(v).innerHTML = `
     <div class="card small muted">
-      Manba: profil tahlili${cache.lastCompetitor ? ` + @${esc(cache.lastCompetitor.who)} solishtiruvi` : ""}${
-    Object.keys(cache).some((k) => k.startsWith("reel:")) ? " + dekodlangan reellar" : ""
+      Source: the profile analysis${cache.lastCompetitor ? ` + @${esc(cache.lastCompetitor.who)} comparison` : ""}${
+    Object.keys(cache).some((k) => k.startsWith("reel:")) ? " + decoded reels" : ""
   }.
     </div>
-    <button class="primary" id="gen">5 ta g'oya va ssenariy yaratish</button>`;
+    <button class="primary" id="gen">Generate five ideas with scripts</button>`;
 
   el("gen")?.addEventListener("click", async () => {
-    loading(v, "G'oyalar va ssenariylar yozilmoqda…");
-    status("g'oyalar yaratilmoqda…", true);
+    loading(v, "Writing ideas and scripts…");
+    status("generating ideas…", true);
     try {
       const reels = Object.entries(cache)
         .filter(([k]) => k.startsWith("reel:"))
@@ -665,10 +665,10 @@ function renderIdeas(force = false) {
       });
       cache.ideas = pack;
       paintIdeas(pack);
-      status("g'oyalar tayyor");
+      status("ideas ready");
     } catch (e) {
       failure(v, e);
-      status("xato");
+      status("error");
     }
   });
 }
@@ -676,34 +676,34 @@ function renderIdeas(force = false) {
 function paintIdeas(pack) {
   el("view-ideas").innerHTML =
     `<div class="row" style="margin-bottom:10px">
-       <div class="small muted spacer">${(pack.ideas || []).length} ta g'oya</div>
-       <button class="ghost tiny" id="regen">Qayta</button>
+       <div class="small muted spacer">${(pack.ideas || []).length}  ideas</div>
+       <button class="ghost tiny" id="regen">Redo</button>
      </div>` +
     (pack.ideas || [])
       .map(
         (i, n) => `<div class="card">
       <h4>${n + 1}. ${esc(i.title)} <span class="badge">${esc(i.format || "reel")}</span></h4>
       <div class="small muted">${esc(i.why_it_fits || "")}</div>
-      <div class="small" style="margin-top:7px"><b>Hook variantlari</b></div>
+      <div class="small" style="margin-top:7px"><b>Hook options</b></div>
       ${listHtml(i.hooks)}
       <pre class="script">${esc(i.script || "")}</pre>
-      ${i.shot_list?.length ? `<div class="small" style="margin-top:7px"><b>Kadrlar</b></div>${listHtml(i.shot_list)}` : ""}
+      ${i.shot_list?.length ? `<div class="small" style="margin-top:7px"><b>Shot list</b></div>${listHtml(i.shot_list)}` : ""}
       ${i.caption ? `<div class="small" style="margin-top:7px"><b>Caption</b><br>${esc(i.caption)}</div>` : ""}
       ${i.hashtags?.length ? `<div class="small muted" style="margin-top:5px">${esc(i.hashtags.join(" "))}</div>` : ""}
       ${
         i.lead_magnet
           ? `<div class="card" style="margin:9px 0 0;background:#0e0e14">
-               <div class="small"><b>Lead magnit</b> — izohga
-                 <span class="badge hot">${esc(i.lead_magnet.keyword)}</span> yozganlarga DM</div>
+               <div class="small"><b>Lead magnet</b> — commenting
+                 <span class="badge hot">${esc(i.lead_magnet.keyword)}</span> gets the DM</div>
                <div class="small muted" style="margin-top:4px">${esc(i.lead_magnet.dm_text)}</div>
                <div class="row end" style="margin-top:7px">
-                 <button class="ghost tiny arm" data-idea="${n}">Qoidani yoqish →</button>
+                 <button class="ghost tiny arm" data-idea="${n}">Arm this rule →</button>
                </div>
              </div>`
           : ""
       }
       <div class="row end" style="margin-top:8px">
-        <button class="ghost tiny cp" data-n="${n}">Ssenariyni nusxalash</button>
+        <button class="ghost tiny cp" data-n="${n}">Copy script</button>
       </div>
     </div>`
       )
@@ -714,7 +714,7 @@ function paintIdeas(pack) {
   document.querySelectorAll("#view-ideas .cp").forEach((b) =>
     b.addEventListener("click", () => {
       navigator.clipboard.writeText(pack.ideas[+b.dataset.n].script || "");
-      status("ssenariy nusxalandi");
+      status("script copied");
     })
   );
 
@@ -743,48 +743,48 @@ async function renderAuto() {
   const d = cache.armDraft || {};
   el(v).innerHTML = `
     <div class="card">
-      <h4>Instagram ulanishi
-        <span class="badge ${info.connected ? "good" : "hot"}">${info.connected ? "ulangan" : "ulanmagan"}</span>
+      <h4>Instagram connection
+        <span class="badge ${info.connected ? "good" : "hot"}">${info.connected ? "connected" : "not connected"}</span>
       </h4>
       <div class="small muted">${esc(
         info.connected
-          ? `@${info.username} — izohlar ${info.poll_seconds}s da bir tekshiriladi`
-          : "backend .env da IG_TOKEN va IG_USER_ID ni to'ldiring (qoidalar baribir saqlanadi, yuborish o'rniga 'would send' log bo'ladi)"
+          ? `@${info.username} — comments checked every ${info.poll_seconds}s`
+          : "Fill IG_TOKEN and IG_USER_ID in backend/.env — rules are still stored, but logged instead of delivered"
       )}</div>
     </div>
 
     <div class="card">
-      <h4>Yangi qoida</h4>
-      <label class="f">Kalit so'z (izohda)</label>
+      <h4>New rule</h4>
+      <label class="f">Comment keyword</label>
       <input class="f" id="kw" value="${esc(d.keyword || "+")}" />
-      <label class="f">Ochiq javob (izohga)</label>
-      <input class="f" id="pr" value="${esc(d.public_reply || "DM'ga yubordim ✅")}" />
-      <label class="f">DM matni</label>
+      <label class="f">Ochiq javob (commenting)</label>
+      <input class="f" id="pr" value="${esc(d.public_reply || "Sent you a DM ✅")}" />
+      <label class="f">DM text</label>
       <textarea class="f" id="dm">${esc(d.dm_text || "")}</textarea>
-      <label class="f">Link (ixtiyoriy)</label>
+      <label class="f">Link (optional)</label>
       <input class="f" id="lk" value="${esc(d.link || "")}" />
       <div style="height:9px"></div>
-      <button class="primary" id="arm">Qoidani yoqish</button>
+      <button class="primary" id="arm">Arm rule</button>
     </div>
 
     <div class="card">
-      <h4>Faol qoidalar</h4>
+      <h4>Active rules</h4>
       ${
         info.rules.length
           ? info.rules
               .map(
                 (r) => `<div class="kv">
                   <span><span class="badge hot">${esc(r.keyword)}</span> ${esc((r.dm_text || "").slice(0, 40))}…</span>
-                  <span>${r.sent_count} ta · <button class="ghost tiny tg" data-id="${esc(r.id)}">${r.active ? "o'chirish" : "yoqish"}</button></span>
+                  <span>${r.sent_count}  sent · <button class="ghost tiny tg" data-id="${esc(r.id)}">${r.active ? "disable" : "enable"}</button></span>
                 </div>`
               )
               .join("")
-          : `<div class="small muted">hali qoida yo'q</div>`
+          : `<div class="small muted">no rules yet</div>`
       }
     </div>
 
     <div class="card">
-      <h4>Hodisalar <button class="ghost tiny" id="rf">yangilash</button></h4>
+      <h4>Events <button class="ghost tiny" id="rf">refresh</button></h4>
       ${
         info.events.length
           ? info.events
@@ -795,12 +795,12 @@ async function renderAuto() {
                   ${esc(e.action)} <span class="muted">${esc(e.at)}</span></div>`
               )
               .join("")
-          : `<div class="small muted">hali hodisa yo'q — ikkinchi akkauntdan izoh yozib ko'ring</div>`
+          : `<div class="small muted">no events yet — try commenting from a second account</div>`
       }
     </div>`;
 
   el("arm")?.addEventListener("click", async () => {
-    status("qoida saqlanmoqda…", true);
+    status("saving the rule…", true);
     try {
       await api("/automation/rules", {
         keyword: el("kw").value.trim(),
@@ -809,10 +809,10 @@ async function renderAuto() {
         link: el("lk").value.trim(),
       });
       cache.armDraft = null;
-      status("qoida yoqildi — izohlar kuzatilmoqda");
+      status("rule armed — watching comments");
       renderAuto();
     } catch (e) {
-      status("xato: " + e.message);
+      status("error: " + e.message);
     }
   });
 
@@ -908,9 +908,9 @@ function renderChat() {
     el(v).innerHTML = `
       <div id="chatlog"></div>
       <div class="card" style="position:sticky;bottom:0">
-        <textarea class="f" id="q" placeholder="Masalan: shu reelga kuchliroq hook yozib ber"></textarea>
+        <textarea class="f" id="q" placeholder="Masalan: shu reelga strongroq hook yozib ber"></textarea>
         <div style="height:7px"></div>
-        <button class="primary" id="ask">So'rash</button>
+        <button class="primary" id="ask">Ask</button>
       </div>`;
     el("ask").addEventListener("click", ask);
     el("q").addEventListener("keydown", (e) => {
@@ -932,8 +932,8 @@ function paintChat() {
           </div>`
         )
         .join("")
-    : `<div class="empty">Ochiq turgan profil yoki reel haqida so'rang.<br>
-         Agent nima yig'ilganini ko'rib turadi.</div>`;
+    : `<div class="empty">Ask about the profile or reel on screen.<br>
+         The agent can see everything captured.</div>`;
   log.lastElementChild?.scrollIntoView({ block: "end", behavior: "smooth" });
 }
 
@@ -943,7 +943,7 @@ async function ask() {
   el("q").value = "";
   chatLog.push({ role: "user", content: q });
   paintChat();
-  status("o'ylanmoqda…", true);
+  status("thinking…", true);
 
   try {
     // Hand over what is on screen plus whatever has already been analysed, so
@@ -967,10 +967,10 @@ async function ask() {
       },
     });
     chatLog.push({ role: "assistant", content: res.answer });
-    status("tayyor");
+    status("ready");
   } catch (e) {
-    chatLog.push({ role: "assistant", content: "Xato: " + e.message });
-    status("xato");
+    chatLog.push({ role: "assistant", content: "Error: " + e.message });
+    status("error");
   }
   paintChat();
 }
@@ -1000,7 +1000,7 @@ document.querySelectorAll(".tab").forEach((t) =>
 // Clicking the status bar copies a shape report. Instagram moves fields between
 // releases, and this says exactly which ones a captured reel carries today.
 el("status").style.cursor = "pointer";
-el("status").title = "Diagnostikani nusxalash";
+el("status").title = "Copy diagnostics";
 el("status").addEventListener("click", () => {
   const diag = {
     context: state.context,
@@ -1012,7 +1012,7 @@ el("status").addEventListener("click", () => {
     profileCaptured: state.mine?.profile || state.target?.profile || null,
   };
   navigator.clipboard.writeText(JSON.stringify(diag, null, 2));
-  status("diagnostika nusxalandi — menga yuboring");
+  status("diagnostics copied — send them over");
 });
 
 chrome.runtime.onMessage.addListener((msg) => {
@@ -1027,10 +1027,10 @@ chrome.runtime.onMessage.addListener((msg) => {
   } else if (msg?.type === "CRAWL_PROGRESS") {
     if (activeTab === "competitor") renderCompetitor();
     const cur = msg.crawl?.current;
-    if (cur) status(`@${cur.username} o'qilmoqda — ${cur.reels} reel`, true);
+    if (cur) status(`@${cur.username} reading — ${cur.reels} reel`, true);
   } else if (msg?.type === "DIGEST_READY") {
     if (activeTab === "competitor") renderCompetitor();
-    status("kunlik xulosa tayyor");
+    status("daily digest ready");
   }
 });
 
