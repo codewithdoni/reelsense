@@ -142,7 +142,9 @@ MY niche — not theirs.
 
 async def compare(me: dict, them: dict, my_metrics: dict, their_metrics: dict,
                   table: list[dict], comments: list[dict], lang: str) -> CompetitorReport:
-    report = await _run(
+    # The caller overwrites table and breakouts with the computed values afterwards:
+    # those are facts, not opinions.
+    return await _run(
         "CompetitorAnalyst",
         COMPETITOR_INSTRUCTIONS + f"\nWrite all prose in {LANG_NAMES.get(lang, 'Uzbek')}.",
         CompetitorReport,
@@ -154,9 +156,6 @@ async def compare(me: dict, them: dict, my_metrics: dict, their_metrics: dict,
             "their_comments": comments[:60],
         },
     )
-    # The table and breakouts are facts, not opinions: enforce the computed values.
-    report.table = [row if isinstance(row, dict) else row for row in report.table] or report.table
-    return report
 
 
 # --- strategist ------------------------------------------------------------
@@ -177,11 +176,16 @@ public_reply is what gets posted under their comment; dm_text is the direct
 message they receive. Write dm_text as a real message from the creator, one or
 two sentences, with the link at the end. If the creator has nothing to deliver
 for an idea, set lead_magnet to null rather than inventing a product.
+
+recent_niche_trends, when present, is live web context about what this niche is
+discussing right now. Use it to make one or two ideas timely, and only when it
+genuinely fits the creator — a forced trend is worse than an evergreen idea.
 """
 
 
 async def make_ideas(profile_report: dict, competitor_report: dict | None,
-                     reel_reports: list[dict], lang: str) -> IdeaPack:
+                     reel_reports: list[dict], lang: str,
+                     trends: list[dict] | None = None) -> IdeaPack:
     return await _run(
         "Strategist",
         IDEAS_INSTRUCTIONS + f"\nWrite titles, hooks, scripts, captions and DM text in {LANG_NAMES.get(lang, 'Uzbek')}.",
@@ -190,5 +194,6 @@ async def make_ideas(profile_report: dict, competitor_report: dict | None,
             "profile_report": profile_report,
             "competitor_report": competitor_report,
             "decoded_reels": reel_reports[:4],
+            "recent_niche_trends": trends or [],
         },
     )

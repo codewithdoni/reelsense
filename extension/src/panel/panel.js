@@ -589,18 +589,18 @@ async function renderAuto() {
 
 // --- tabs ------------------------------------------------------------------
 
-function switchTab(name, force = false) {
+function switchTab(name) {
   activeTab = name;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   document.querySelectorAll(".view").forEach((s) => s.classList.toggle("active", s.id === "view-" + name));
-  render(force);
+  render();
 }
 
-function render(force = false) {
+function render() {
   if (activeTab === "profile") renderProfile();
   else if (activeTab === "reel") renderReel();
   else if (activeTab === "competitor") renderCompetitor();
-  else if (activeTab === "ideas") renderIdeas(force && !cache.ideas ? false : false);
+  else if (activeTab === "ideas") renderIdeas();
   else if (activeTab === "auto") renderAuto();
 }
 
@@ -610,14 +610,13 @@ document.querySelectorAll(".tab").forEach((t) =>
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "CONTEXT_CHANGED") {
+    // A new page means a new subject: re-render so the tab matches what is on screen.
     state.context = msg.context;
-    renderCtx();
-    if (activeTab === "reel" || activeTab === "competitor" || activeTab === "profile") {
-      refresh();
-    }
+    refresh();
   } else if (msg?.type === "STATE_CHANGED") {
-    refresh(activeTab === "profile" || activeTab === "competitor" ? false : false);
-    renderCtx();
+    // More reels captured. Refresh the counters, but never wipe a rendered report
+    // or a half-filled automation form out from under the user.
+    refresh(false);
   }
 });
 

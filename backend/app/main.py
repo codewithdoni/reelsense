@@ -14,7 +14,7 @@ load_dotenv()
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-from . import brain, dm, video  # noqa: E402
+from . import brain, dm, exa, video  # noqa: E402
 from .metrics import compare_table, summarize  # noqa: E402
 from .schemas import (  # noqa: E402
     AnalyzeProfileReq,
@@ -37,10 +37,11 @@ log = logging.getLogger("reelsense")
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(dm.watch())
     log.info(
-        "ReelSense up — model=%s video=%s instagram=%s",
+        "ReelSense up — model=%s video=%s instagram=%s trends=%s",
         brain.MODEL,
         "on" if video.configured() else "off",
         "connected" if dm.configured() else "not connected",
+        "on" if exa.configured() else "off",
     )
     yield
     task.cancel()
@@ -61,6 +62,13 @@ def _fail(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail=str(exc)[:400])
 
 
+def _real_key(name: str) -> bool:
+    """A key copied from .env.example is worse than no key: it fails at call time
+    instead of at startup. Treat placeholders as missing."""
+    value = (os.getenv(name) or "").strip()
+    return len(value) > 20 and "..." not in value and not value.lower().startswith("your")
+
+
 @app.get("/health")
 async def health():
     return {
@@ -68,7 +76,8 @@ async def health():
         "model": brain.MODEL,
         "video": video.configured(),
         "instagram": dm.configured(),
-        "openai_key": bool(os.getenv("OPENAI_API_KEY")),
+        "trends": exa.configured(),
+        "openai_key": _real_key("OPENAI_API_KEY"),
     }
 
 
@@ -146,16 +155,37 @@ async def compare(req: CompareReq):
 
 @app.post("/generate/ideas")
 async def generate_ideas(req: IdeasReq):
+    # Past performance says what worked; the trend radar says what the niche is
+    # talking about this week. Ideas are better when they know both.
+    trends = await exa.trends(req.profile_report.niche) if exa.configured() else []
+    if trends:
+        log.info("trend radar: %d recent items for %r", len(trends), req.profile_report.niche)
+
     try:
         pack = await brain.make_ideas(
             req.profile_report.model_dump(),
             req.competitor_report.model_dump() if req.competitor_report else None,
             [r.model_dump() for r in req.reel_reports],
             req.lang,
+            trends=trends,
         )
     except Exception as exc:  # noqa: BLE001
         raise _fail(exc) from exc
-    return pack.model_dump()
+    return {**pack.model_dump(), "trend_sources": [t["url"] for t in trends[:5]]}
+
+
+@app.get("/trends")
+async def get_trends(niche: str):
+    if not exa.configured():
+        raise HTTPException(400, "EXA_API_KEY sozlanmagan")
+    return {"niche": niche, "items": await exa.trends(niche)}
+
+
+@app.get("/discover")
+async def discover(username: str):
+    if not exa.configured():
+        raise HTTPException(400, "EXA_API_KEY sozlanmagan")
+    return {"seed": username, "accounts": await exa.similar_accounts(username)}
 
 
 # --- automation ------------------------------------------------------------
