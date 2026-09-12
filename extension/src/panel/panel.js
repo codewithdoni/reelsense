@@ -5,9 +5,14 @@ const API = "http://localhost:8000";
 const $ = (s) => document.querySelector(s);
 const el = (id) => document.getElementById(id);
 
-let state = { me: null, context: { kind: "other" }, target: null, mine: null, suggested: [], known: [] };
+let state = {
+  me: null, context: { kind: "other" }, target: null, mine: null,
+  suggested: [], known: [], recent: [], stats: { payloads: 0, matched: 0 },
+  totals: { reels: 0, profiles: 0 },
+};
 const cache = {};      // keyed result cache so a demo can be repeated offline
 let activeTab = "profile";
+let selectedCode = null;   // reel chosen from the feed list
 
 const fmt = (n) => {
   if (n == null) return "—";
@@ -60,22 +65,26 @@ async function refresh(rerender = true) {
 function renderCtx() {
   const c = state.context || { kind: "other" };
   const t = state.target;
+  const st = state.stats || {};
   let main = "Instagram sahifasini oching…";
-  let sub = "";
 
   if (c.kind === "profile") {
     const isMe = state.me && c.username === state.me;
     main = `@${c.username}${isMe ? " (siz)" : ""}`;
-    sub = t
-      ? `${fmt(t.profile?.followers)} obunachi · ${t.reel_count} reel yig'ildi`
-      : "ma'lumot kutilmoqda — sahifani yangilang";
   } else if (c.kind === "reel") {
-    main = `Reel ${c.code}`;
-    sub = t ? `@${t.username} · ${t.reel_count} reel yig'ildi` : "reel ma'lumoti kutilmoqda";
+    main = t ? `Reel · @${t.username}` : `Reel ${c.code}`;
+  } else if (c.kind === "feed") {
+    main = { reels: "Reels lentasi", explore: "Explore", home: "Bosh lenta" }[c.source] || "Lenta";
   } else if (c.kind === "dashboard") {
     main = "Professional Dashboard";
-    sub = "insights yig'ilmoqda";
   }
+
+  // The capture counters are always shown: they separate "nothing was
+  // intercepted" from "intercepted but this page has nothing to offer".
+  const tot = state.totals || { reels: 0, profiles: 0 };
+  const sub = st.payloads
+    ? `${tot.reels} reel · ${tot.profiles} profil yig'ildi · ${st.payloads} so'rov o'qildi`
+    : "hali ma'lumot yo'q — sahifani yangilang (⌘R)";
 
   $(".ctx-main").textContent = main;
   $(".ctx-sub").textContent = sub;
@@ -199,26 +208,64 @@ function paintProfileReport(r, subject) {
 
 // --- reel ------------------------------------------------------------------
 
+function findReel(code) {
+  return (
+    state.target?.reels?.find((r) => r.code === code) ||
+    state.recent?.find((r) => r.code === code) ||
+    null
+  );
+}
+
 function renderReel() {
   const v = "view-reel";
   const c = state.context;
+  const code = c.kind === "reel" ? c.code : selectedCode;
 
-  if (c.kind !== "reel") {
-    el(v).innerHTML = `<div class="empty">Biror <b>reel</b>ni oching (o'zingizniki yoki raqobatchiniki),<br>keyin uni dekodlang.</div>`;
+  // On a feed there is no reel in the URL, so offer everything captured while
+  // the user was scrolling. This is the reels feed's whole value: it streams
+  // other creators' best work past you, and now none of it is thrown away.
+  if (!code) {
+    const list = state.recent || [];
+    if (!list.length) {
+      el(v).innerHTML = `<div class="empty">Reels lentasini aylantiring yoki biror reelni oching —<br>ko'rilgan reellar shu yerda to'planadi.</div>`;
+      return;
+    }
+    el(v).innerHTML =
+      `<div class="small muted" style="margin-bottom:9px">Aylantirish davomida ${list.length} ta reel yig'ildi. Birini tanlang:</div>` +
+      list
+        .map(
+          (r) => `<div class="card pick" data-code="${esc(r.code)}" style="cursor:pointer">
+            <h4>@${esc(r.username || "—")} <span class="badge">${fmt(r.views)} ko'rish</span></h4>
+            <div class="small muted">${esc((r.caption || "(caption yo'q)").slice(0, 90))}</div>
+          </div>`
+        )
+        .join("");
+    document.querySelectorAll("#view-reel .pick").forEach((card) =>
+      card.addEventListener("click", () => {
+        selectedCode = card.dataset.code;
+        renderReel();
+      })
+    );
     return;
   }
 
-  const t = state.target;
-  const reel = t?.reels?.find((r) => r.code === c.code);
-  const cached = cache["reel:" + c.code];
-  if (cached) return paintReel(cached, reel, c.code);
+  const reel = findReel(code);
+  const cached = cache["reel:" + code];
+  if (cached) return paintReel(cached, reel, code);
 
+  const back = c.kind === "reel" ? "" : `<button class="ghost tiny" id="back">← ro'yxat</button>`;
   el(v).innerHTML = `
+    ${back}
     ${reel ? reelHead(reel) : `<div class="card small muted">Reel metadatasi hali yig'ilmadi — sahifani yangilang.</div>`}
     <button class="primary" id="dec">Bu reelni dekodlash</button>
     <div class="small muted" style="margin-top:8px">
       Video ko'riladi va eshitiladi: hook, struktura, ekran matni, temp va CTA ajratiladi.
     </div>`;
+
+  el("back")?.addEventListener("click", () => {
+    selectedCode = null;
+    renderReel();
+  });
 
   el("dec")?.addEventListener("click", async () => {
     loading(v, "Video ko'rilmoqda va tahlil qilinmoqda…");
@@ -230,14 +277,14 @@ function renderReel() {
         if (probe?.ok && probe.bytes < 19_000_000) videoB64 = probe.b64;
       }
       const rep = await api("/analyze/reel", {
-        reel: reel || { code: c.code },
-        comments: t?.comments?.[c.code] || [],
+        reel: reel || { code },
+        comments: state.target?.comments?.[code] || [],
         my_profile: state.mine?.profile || null,
         video_b64: videoB64,
         lang: lang(),
       });
-      cache["reel:" + c.code] = rep;
-      paintReel(rep, reel, c.code);
+      cache["reel:" + code] = rep;
+      paintReel(rep, reel, code);
       status("reel dekodlandi" + (rep.saw_video ? " (video ko'rildi)" : " (metadata rejimi)"));
     } catch (e) {
       failure(v, e);
@@ -260,6 +307,7 @@ function reelHead(r) {
 
 function paintReel(rep, reel, code) {
   el("view-reel").innerHTML = `
+    ${selectedCode ? `<button class="ghost tiny" id="back2">← ro'yxat</button>` : ""}
     ${reel ? reelHead(reel) : ""}
     <div class="card">
       <h4>Hook (0–3s) <span class="badge ${rep.hook_score >= 7 ? "good" : "hot"}">${rep.hook_score ?? "—"}/10</span></h4>
@@ -285,6 +333,10 @@ function paintReel(rep, reel, code) {
   el("copy")?.addEventListener("click", () => {
     navigator.clipboard.writeText(rep.remake_script || "");
     status("ssenariy nusxalandi");
+  });
+  el("back2")?.addEventListener("click", () => {
+    selectedCode = null;
+    renderReel();
   });
   void code;
 }
@@ -620,5 +672,13 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
-setInterval(() => refresh(false), 2500);
+setInterval(async () => {
+  const before = state.totals?.reels || 0;
+  await refresh(false);
+  // Keep the feed list growing as the user scrolls, but never redraw over a
+  // rendered report or a reel they already picked.
+  if (activeTab === "reel" && !selectedCode && state.context?.kind === "feed") {
+    if ((state.totals?.reels || 0) !== before) renderReel();
+  }
+}, 2500);
 refresh();

@@ -9,8 +9,8 @@ import { extract } from "./lib/ig.js";
 const STORE_KEY = "rs_store";
 const ME_KEY = "rs_me";
 
-/** @type {{profiles: Record<string, any>, suggested: string[]}} */
-let store = { profiles: {}, suggested: [] };
+/** @type {{profiles: Record<string, any>, suggested: string[], stats: any}} */
+let store = { profiles: {}, suggested: [], stats: { payloads: 0, matched: 0, lastAt: 0 } };
 let me = null;
 /** @type {Record<number, any>} */
 const contextByTab = {};
@@ -20,7 +20,8 @@ let saveTimer = null;
 
 async function boot() {
   const s = await chrome.storage.session.get(STORE_KEY);
-  if (s[STORE_KEY]) store = s[STORE_KEY];
+  if (s[STORE_KEY]) store = { ...store, ...s[STORE_KEY] };
+  if (!store.stats) store.stats = { payloads: 0, matched: 0, lastAt: 0 };
   const l = await chrome.storage.local.get(ME_KEY);
   if (l[ME_KEY]) me = l[ME_KEY];
 }
@@ -53,6 +54,12 @@ function ingest(url, body, tabId) {
   const { reels, users, comments } = extract(body);
   let touched = false;
 
+  // Counters make the difference between "nothing was intercepted" and
+  // "intercepted but nothing recognised" visible in the panel.
+  store.stats.payloads += 1;
+  if (reels.length || users.length || comments.length) store.stats.matched += 1;
+  store.stats.lastAt = Date.now();
+
   for (const u of users) {
     const b = bucket(u.username);
     b.profile = { ...(b.profile || {}), ...u };
@@ -71,7 +78,8 @@ function ingest(url, body, tabId) {
     }
     if (!r.username) continue;
     const b = bucket(r.username);
-    b.reels[r.code] = { ...(b.reels[r.code] || {}), ...r };
+    const prev = b.reels[r.code];
+    b.reels[r.code] = { ...(prev || {}), ...r, capturedAt: prev?.capturedAt || Date.now() };
     b.updatedAt = Date.now();
     touched = true;
   }
@@ -156,6 +164,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         known: Object.keys(store.profiles),
         target: target ? snapshot(target) : null,
         mine: me ? snapshot(me) : null,
+        stats: store.stats,
+        recent: recentReels(30),
+        totals: {
+          reels: Object.values(store.profiles).reduce((n, p) => n + Object.keys(p.reels).length, 0),
+          profiles: Object.keys(store.profiles).length,
+        },
       });
     });
     return true;
@@ -179,6 +193,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   return false;
 });
+
+/** Everything captured anywhere, newest first — what the reels feed fills up. */
+function recentReels(limit) {
+  const all = [];
+  for (const p of Object.values(store.profiles)) {
+    for (const r of Object.values(p.reels)) all.push(r);
+  }
+  return all
+    .sort((a, z) => (z.capturedAt || z.taken_at || 0) - (a.capturedAt || a.taken_at || 0))
+    .slice(0, limit);
+}
 
 function snapshot(username) {
   const b = store.profiles[username];

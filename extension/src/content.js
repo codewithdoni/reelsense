@@ -35,6 +35,13 @@
       if (parts[1] && parts[1] !== "audio") {
         return { kind: "reel", code: parts[1] };
       }
+      // The reels feed itself: no shortcode in the URL, but Instagram streams a
+      // new reel into the page on every scroll. That is the richest capture
+      // surface there is, so treat it as a first-class context.
+      return { kind: "feed", source: "reels" };
+    }
+    if (parts[0] === "explore") {
+      return { kind: "feed", source: "explore" };
     }
     if (parts[0] === "accounts" || path.includes("dashboard") || path.includes("insights")) {
       return { kind: "dashboard" };
@@ -42,6 +49,7 @@
     if (parts.length >= 1 && !RESERVED.has(parts[0])) {
       return { kind: "profile", username: parts[0], tab: parts[1] || "posts" };
     }
+    if (!parts.length) return { kind: "feed", source: "home" };
     return { kind: "other" };
   }
 
