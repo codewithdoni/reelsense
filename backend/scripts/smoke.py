@@ -140,9 +140,10 @@ def test_http() -> None:
         r = httpx.get("http://localhost:8000/health", timeout=3)
         body = r.json()
         check("/health responds", r.status_code == 200)
-        check("model configured", bool(body.get("model")))
-        if not body.get("openai_key"):
-            print("     ⚠ OPENAI_API_KEY not set — model endpoints will fail")
+        if body.get("llm_ready"):
+            check(f"llm provider: {body['provider']} ({body['model']})", True)
+        else:
+            print("     ⚠ no model key — set GEMINI_API_KEY, OPENAI_API_KEY or OPENROUTER_API_KEY")
         if not body.get("video"):
             print("     ⚠ no video key — reels analysed from metadata only")
         if not body.get("instagram"):

@@ -9,18 +9,16 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+import re
 from typing import Any, TypeVar
 
 from agents import Agent, Runner
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
+from . import provider
 from .schemas import CompetitorReport, IdeaPack, ProfileReport, ReelReport
 
 log = logging.getLogger("reelsense.brain")
-
-MODEL = os.getenv("REELSENSE_MODEL", "gpt-5.6-terra")
-FALLBACK_MODELS = [m for m in os.getenv("REELSENSE_FALLBACK_MODELS", "gpt-5.6-luna,gpt-4o").split(",") if m]
 
 LANG_NAMES = {"uz": "Uzbek", "ru": "Russian", "en": "English"}
 
@@ -43,27 +41,63 @@ Instagram data. Rules that apply to every answer:
 T = TypeVar("T", bound=BaseModel)
 
 
-def _agent(name: str, instructions: str, output_type: type[T], model: str | None = None) -> Agent:
-    return Agent(
-        name=name,
-        instructions=HOUSE_RULES + "\n" + instructions,
-        model=model or MODEL,
-        output_type=output_type,
-    )
+def _parse_loose(text: str, output_type: type[T]) -> T:
+    """Recover a typed result from a plain text answer.
+
+    Not every provider implements strict JSON schema the same way — Gemini's
+    OpenAI-compatible endpoint, for instance, is fussy about optional fields.
+    When the schema-enforced path is rejected we ask for plain JSON instead and
+    validate it ourselves, so a provider quirk costs a retry rather than the
+    whole feature.
+    """
+    cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
+    try:
+        return output_type.model_validate_json(cleaned)
+    except (ValidationError, ValueError):
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if not match:
+            raise
+        return output_type.model_validate_json(match.group(0))
 
 
 async def _run(name: str, instructions: str, output_type: type[T], payload: Any) -> T:
-    """Run an agent, degrading to a cheaper model if the primary one is unavailable."""
+    """Run an agent, degrading across models and output modes before giving up."""
     prompt = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
+    system = HOUSE_RULES + "\n" + instructions
     errors: list[str] = []
-    for model in [MODEL, *FALLBACK_MODELS]:
+
+    for model_name in [provider.MODEL, *provider.FALLBACKS]:
+        model = provider.model_for(model_name)
+
+        # Preferred: the provider enforces the schema for us.
         try:
-            result = await Runner.run(_agent(name, instructions, output_type, model), prompt)
-            return result.final_output
-        except Exception as exc:  # noqa: BLE001 - we deliberately try the next model
-            errors.append(f"{model}: {exc}")
-            log.warning("agent %s failed on %s: %s", name, model, exc)
-    raise RuntimeError(f"All models failed for {name}. " + " | ".join(errors))
+            agent = Agent(name=name, instructions=system, model=model, output_type=output_type)
+            return (await Runner.run(agent, prompt)).final_output
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{model_name} (structured): {exc}")
+            log.warning("agent %s structured output failed on %s: %s", name, model_name, exc)
+
+        # Fallback: ask for JSON in prose and validate it here.
+        try:
+            schema = json.dumps(output_type.model_json_schema(), ensure_ascii=False)
+            agent = Agent(
+                name=name,
+                instructions=(
+                    f"{system}\n\nRespond with a single JSON object and nothing else — "
+                    f"no prose, no markdown fence. It must validate against this JSON "
+                    f"schema:\n{schema}"
+                ),
+                model=model,
+            )
+            raw = (await Runner.run(agent, prompt)).final_output
+            result = _parse_loose(str(raw), output_type)
+            log.info("agent %s recovered via loose JSON on %s", name, model_name)
+            return result
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{model_name} (loose): {exc}")
+            log.warning("agent %s loose JSON failed on %s: %s", name, model_name, exc)
+
+    raise RuntimeError(f"All models failed for {name}. " + " | ".join(errors[:4]))
 
 
 # --- profile ---------------------------------------------------------------

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -14,7 +13,7 @@ load_dotenv()
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-from . import brain, dm, exa, video  # noqa: E402
+from . import brain, dm, exa, provider, video  # noqa: E402
 from .metrics import compare_table, summarize  # noqa: E402
 from .schemas import (  # noqa: E402
     AnalyzeProfileReq,
@@ -35,10 +34,11 @@ log = logging.getLogger("reelsense")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    provider.configure()
     task = asyncio.create_task(dm.watch())
     log.info(
-        "ReelSense up — model=%s video=%s instagram=%s trends=%s",
-        brain.MODEL,
+        "ReelSense up — llm=%s video=%s instagram=%s trends=%s",
+        provider.ACTIVE or "NOT CONFIGURED",
         "on" if video.configured() else "off",
         "connected" if dm.configured() else "not connected",
         "on" if exa.configured() else "off",
@@ -62,22 +62,15 @@ def _fail(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail=str(exc)[:400])
 
 
-def _real_key(name: str) -> bool:
-    """A key copied from .env.example is worse than no key: it fails at call time
-    instead of at startup. Treat placeholders as missing."""
-    value = (os.getenv(name) or "").strip()
-    return len(value) > 20 and "..." not in value and not value.lower().startswith("your")
-
-
 @app.get("/health")
 async def health():
     return {
         "ok": True,
-        "model": brain.MODEL,
+        **provider.status(),
+        "llm_ready": provider.configured(),
         "video": video.configured(),
         "instagram": dm.configured(),
         "trends": exa.configured(),
-        "openai_key": _real_key("OPENAI_API_KEY"),
     }
 
 

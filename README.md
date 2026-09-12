@@ -80,7 +80,9 @@ instagram.com (logged in)
         ├─ metrics.py   medians, breakouts, cadence, duration buckets   ← arithmetic
         ├─ brain.py     ProfileAnalyst · ReelDecoder · CompetitorAnalyst · Strategist
         │               (OpenAI Agents SDK, typed Pydantic outputs)     ← judgement
+        ├─ provider.py  routes the SDK at OpenAI, Gemini or OpenRouter
         ├─ video.py     OpenRouter → Gemini, native video understanding
+        ├─ exa.py       trend radar + competitor discovery
         └─ dm.py        rules engine + comment watcher → Instagram Messaging API
 ```
 
@@ -116,11 +118,22 @@ node extension/test/extract.test.mjs     # payload normalizer, 3 real shapes
 
 ## Configuration
 
+The four agents are written against the OpenAI Agents SDK, but the SDK is really
+an OpenAI-protocol client and both Gemini and OpenRouter speak that protocol. So
+the same agents run unchanged on whichever provider you actually have credits
+for — which at a hackathon is rarely the default one. Set one key, or name the
+provider explicitly with `LLM_PROVIDER`.
+
 | Variable | Needed for |
 |---|---|
-| `OPENAI_API_KEY` | everything |
-| `OPENROUTER_API_KEY` *or* `GEMINI_API_KEY` | watching the video (otherwise metadata-only) |
+| `GEMINI_API_KEY` *or* `OPENAI_API_KEY` *or* `OPENROUTER_API_KEY` | the agents — any one of them |
+| `GEMINI_API_KEY` *or* `OPENROUTER_API_KEY` | watching the video (otherwise metadata-only) |
+| `EXA_API_KEY` | the trend radar (optional) |
 | `IG_TOKEN`, `IG_USER_ID` | sending DMs (otherwise rules log "would send") |
+
+Providers differ in how strictly they implement JSON schema output. When the
+schema-enforced path is rejected, the agent retries by asking for plain JSON and
+validating it locally, so a provider quirk costs a retry rather than the feature.
 
 Instagram credentials come from developers.facebook.com → your app → Instagram → *API setup with Instagram login* → **Generate token**, with scopes `instagram_business_basic`, `instagram_business_manage_comments`, `instagram_business_manage_messages`. Standard Access is enough to run this on your own account.
 
