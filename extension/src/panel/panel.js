@@ -214,7 +214,9 @@ function renderProfile() {
     status("profil tahlili…", true);
     try {
       const rep = await api("/analyze/profile", {
-        profile: fresh.profile || subject.profile,
+        // Follower counts are a nice-to-have; the reels are the analysis. Never
+        // block on a profile header that Instagram declined to hand over.
+        profile: fresh.profile || subject.profile || { username: subject.username },
         reels: fresh.reels?.length ? fresh.reels : subject.reels,
         lang: lang(),
       });

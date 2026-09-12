@@ -100,6 +100,55 @@
     return true;
   });
 
+  // --- profile header from the DOM -----------------------------------------
+  // The counts are rendered on the page whether or not the JSON endpoint
+  // answers, so read them there as a fallback. Instagram abbreviates them
+  // ("12.8K"), but the follower link carries the exact figure in its title.
+  const parseCount = (s) => {
+    if (!s) return null;
+    const t = String(s).replace(/[\s, ]/g, "").toLowerCase();
+    const m = t.match(/^([\d.]+)([km])?/);
+    if (!m) return null;
+    const n = parseFloat(m[1]);
+    if (!Number.isFinite(n)) return null;
+    return Math.round(n * (m[2] === "k" ? 1e3 : m[2] === "m" ? 1e6 : 1));
+  };
+
+  function readProfileDom(username) {
+    const pick = (href) =>
+      document.querySelector(`a[href="/${username}/${href}/"] span[title], a[href="/${username}/${href}/"] span`);
+
+    const followersEl = pick("followers");
+    const followingEl = pick("following");
+    const exact = followersEl?.getAttribute?.("title");
+
+    // Posts has no link, so fall back to the header's first statistic.
+    const items = [...document.querySelectorAll("header section ul li, header ul li")];
+    const postsText = items[0]?.innerText || "";
+
+    const bio = document.querySelector("header section > div:last-child")?.innerText || "";
+    const profile = {
+      username,
+      followers: parseCount(exact) ?? parseCount(followersEl?.innerText) ?? 0,
+      following: parseCount(followingEl?.innerText) ?? 0,
+      media_count: parseCount(postsText) ?? 0,
+      biography: bio.split("\n").slice(1).join(" ").slice(0, 400),
+      full_name: document.querySelector("header section h2, header h2")?.innerText || "",
+    };
+    return profile.followers || profile.media_count ? profile : null;
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "READ_PROFILE_DOM") return;
+    try {
+      const profile = readProfileDom(msg.username);
+      sendResponse(profile ? { ok: true, profile } : { ok: false, error: "header topilmadi" });
+    } catch (e) {
+      sendResponse({ ok: false, error: String(e) });
+    }
+    return true;
+  });
+
   // --- media fetch helper --------------------------------------------------
   // Instagram CDN often rejects server-side requests. The page itself can fetch
   // its own video, so the backend asks us to do it and we forward the bytes.

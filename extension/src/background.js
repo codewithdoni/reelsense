@@ -196,9 +196,23 @@ async function ensureProfile(username, tabId) {
           return true;
         }
         if (res?.error) console.info("[ReelSense] profile fetch:", username, res.error);
+
+        // The endpoint can decline, but the counts are rendered on the page
+        // regardless — so read the header rather than give up on them.
+        const dom = await askTab(target, { type: "READ_PROFILE_DOM", username });
+        if (dom?.ok) {
+          const b = bucket(username);
+          b.profile = mergeProfile(b.profile, dom.profile);
+          b.updatedAt = Date.now();
+          persist();
+          chrome.runtime.sendMessage({ type: "STATE_CHANGED" }, () => void chrome.runtime.lastError);
+          console.info("[ReelSense] profile read from DOM for", username);
+          return true;
+        }
       }
       await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
     }
+    console.warn("[ReelSense] could not resolve profile for", username);
     return false;
   } finally {
     inFlight.delete(username);
