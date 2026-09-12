@@ -150,3 +150,28 @@ label.f { display: block; font-size: 11px; color: var(--muted); margin: 7px 0 3p
 
 .evt { font-size: 11.5px; padding: 5px 0; border-bottom: 1px solid var(--line); }
 .evt b { color: var(--accent2); }
+
+/* --- chat ----------------------------------------------------------------- */
+
+.card.mine { background: #0e0e14; }
+
+.md-body { font-size: 12.5px; line-height: 1.6; }
+.md-body p { margin: 0 0 7px; }
+.md-body p:last-child { margin-bottom: 0; }
+.md-body h3, .md-body h4, .md-body h5, .md-body h6 {
+  margin: 11px 0 5px; font-size: 12.5px; color: var(--fg);
+}
+.md-body h3:first-child, .md-body h4:first-child { margin-top: 0; }
+.md-body strong { color: #fff; font-weight: 650; }
+.md-body em { color: var(--muted); font-style: normal; }
+.md-body ul.md, .md-body ol.md { margin: 5px 0 8px; padding-left: 17px; }
+.md-body li { margin-bottom: 5px; }
+.md-body li::marker { color: var(--accent); }
+.md-body code {
+  background: #0b0b11; border: 1px solid var(--line); border-radius: 4px;
+  padding: 1px 4px; font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* The composer is sticky, so the last reply must clear it. */
+#chatlog { padding-bottom: 6px; }

@@ -809,6 +809,78 @@ async function renderAuto() {
 
 // --- chat ------------------------------------------------------------------
 
+/**
+ * Minimal markdown renderer for model replies.
+ *
+ * Everything is HTML-escaped first, so model output can never inject markup —
+ * only the small set of patterns below is turned back into tags. A full parser
+ * would be a dependency, and the CDN allowlist plus a side panel's size budget
+ * do not justify one for headings, bold and bullets.
+ */
+function md(src) {
+  const lines = esc(src).split("\n");
+  const out = [];
+  let list = null;
+
+  const inline = (s) =>
+    s
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+      .replace(/(^|[\s(])_([^_\n]+)_/g, "$1<em>$2</em>");
+
+  const closeList = () => {
+    if (list) {
+      out.push(`</${list}>`);
+      list = null;
+    }
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      closeList();
+      const level = Math.min(heading[1].length + 2, 6);
+      out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+      continue;
+    }
+
+    const bullet = line.match(/^\s*[-*•]\s+(.*)$/);
+    if (bullet) {
+      if (list !== "ul") {
+        closeList();
+        out.push('<ul class="md">');
+        list = "ul";
+      }
+      out.push(`<li>${inline(bullet[1])}</li>`);
+      continue;
+    }
+
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (numbered) {
+      if (list !== "ol") {
+        closeList();
+        out.push('<ol class="md">');
+        list = "ol";
+      }
+      out.push(`<li>${inline(numbered[1])}</li>`);
+      continue;
+    }
+
+    if (!line.trim()) {
+      closeList();
+      continue;
+    }
+
+    closeList();
+    out.push(`<p>${inline(line)}</p>`);
+  }
+  closeList();
+  return out.join("");
+}
+
 const chatLog = [];
 
 function renderChat() {
@@ -836,15 +908,15 @@ function paintChat() {
   log.innerHTML = chatLog.length
     ? chatLog
         .map(
-          (m) => `<div class="card" style="${m.role === "user" ? "background:#0e0e14" : ""}">
-            <div class="small muted" style="margin-bottom:4px">${m.role === "user" ? "Siz" : "ReelSense"}</div>
-            <div class="small" style="white-space:pre-wrap">${esc(m.content)}</div>
+          (m) => `<div class="card${m.role === "user" ? " mine" : ""}">
+            <div class="small muted" style="margin-bottom:5px">${m.role === "user" ? "Siz" : "ReelSense"}</div>
+            <div class="md-body">${m.role === "user" ? esc(m.content) : md(m.content)}</div>
           </div>`
         )
         .join("")
     : `<div class="empty">Ochiq turgan profil yoki reel haqida so'rang.<br>
          Agent nima yig'ilganini ko'rib turadi.</div>`;
-  log.scrollIntoView({ block: "end" });
+  log.lastElementChild?.scrollIntoView({ block: "end", behavior: "smooth" });
 }
 
 async function ask() {
