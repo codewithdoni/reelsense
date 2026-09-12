@@ -35,15 +35,17 @@ PROVIDERS = {
     "gemini": {
         "key_env": "GEMINI_API_KEY",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "default_model": "gemini-2.5-flash",
-        "fallbacks": ["gemini-2.0-flash"],
+        # Google retires model ids quickly — gemini-2.5-flash is already closed to
+        # new keys. The -latest alias is the safety net when a pinned id lapses.
+        "default_model": "gemini-3.6-flash",
+        "fallbacks": ["gemini-flash-latest", "gemini-3.5-flash"],
         "native": False,
     },
     "openrouter": {
         "key_env": "OPENROUTER_API_KEY",
         "base_url": "https://openrouter.ai/api/v1",
-        "default_model": "google/gemini-2.5-flash",
-        "fallbacks": ["openai/gpt-4o-mini"],
+        "default_model": "google/gemini-3-flash",
+        "fallbacks": ["google/gemini-2.5-flash", "openai/gpt-4o-mini"],
         "native": False,
     },
 }

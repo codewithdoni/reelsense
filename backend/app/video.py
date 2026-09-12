@@ -24,8 +24,8 @@ log = logging.getLogger("reelsense.video")
 
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
-VIDEO_MODEL = os.getenv("REELSENSE_VIDEO_MODEL", "google/gemini-2.5-flash")
-GEMINI_MODEL = os.getenv("REELSENSE_GEMINI_MODEL", "gemini-2.5-flash")
+VIDEO_MODEL = os.getenv("REELSENSE_VIDEO_MODEL") or "google/gemini-3-flash"
+GEMINI_MODEL = os.getenv("REELSENSE_GEMINI_MODEL") or "gemini-3.6-flash"
 MAX_BYTES = 19_000_000  # inline video ceiling
 
 PROMPT = """Analyse this short-form vertical video as a social media strategist.
