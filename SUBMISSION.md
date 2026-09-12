@@ -60,6 +60,18 @@ Interface in English; hooks, scripts and DMs written in Uzbek, Russian or Englis
 
 ---
 
+## Prior work
+
+*Paste into the portal's Prior Work field.*
+
+No prior code. ReelSense was written from an empty directory during the hackathon: first commit 13:05, last 16:00, 18 commits across 27 files and roughly 4,700 lines. The git history is public and linear, so every piece can be traced to the day.
+
+What we did not write: the open-source dependencies. OpenAI Agents SDK, FastAPI, Pydantic, httpx and uvicorn on the backend; the extension is vanilla Manifest V3 with no framework and no build step. Models are called through OpenRouter (OpenAI and Gemini), and comment-to-DM uses Meta's official Instagram Messaging API.
+
+One piece of context rather than prior work: the Instagram account used throughout the demo, @plusfit_ai, is our own creator account with 12.8K followers and 42 posts. It is the subject being analysed, not code being reused — it exists so the analysis runs against real reels, real collaborators and real comments instead of fixtures.
+
+---
+
 ## Social post
 
 > We built ReelSense at the AI Tinkerers × OpenAI *Agents, Everywhere* hackathon in Tashkent 🇺🇿
