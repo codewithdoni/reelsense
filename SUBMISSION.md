@@ -12,17 +12,49 @@ Everything the portal asks for, ready to paste. Deadline 15:30.
 
 ## Written description
 
+*Paste the block below into the portal's Project Description field.*
+
+---
+
+### The problem
+
 Creators do their work on instagram.com. Every tool that helps them lives somewhere else.
 
-You paste a username into a separate app, wait, and read a generic report about an account you already know. Then you go back to Instagram and start over. Comment-to-DM tools automate the delivery end, but they have no idea what your content is about — a human still writes every rule. Nothing closes the loop.
+You paste a username into a separate app, wait, and read a generic report about an account you already know — then go back to Instagram and start over. Comment-to-DM tools sit on the other side of the same gap: they automate delivery but have no idea what your content is about, so a human still writes every rule. Analysis never reaches the work, and automation never understands it.
 
-ReelSense is a Chrome side panel on instagram.com. Whatever you are looking at, it is already looking at too. Open your profile and it audits what separates your best reels from your worst. Open a competitor and it compares you side by side, finds their breakout reels, and extracts five formats worth stealing with hooks already rewritten for your niche. Open any viral reel and it watches the video — sees the frames, hears the audio — then rebuilds that format as a script in your voice, in Uzbek, Russian or English.
+### The agent, and why the environment is load-bearing
 
-Then it acts. Each idea comes with a lead magnet: a comment keyword, a public reply, and a DM. Arm it from the panel, and when a viewer comments that keyword, the agent delivers the DM through Meta's official Instagram Messaging API. The agent wrote the call to action, configured the automation for it, and handles the responses. That chain does not exist in a chat window.
+ReelSense is a Chrome side panel on instagram.com. Whatever you are looking at, it is already looking at too.
 
-The environment is what makes it possible. Instagram's official API only reports on your own account, so competitor analysis is closed to it, and scraping Instagram's private endpoints breaks every few weeks when their GraphQL ids rotate. ReelSense does neither. A content script in the page's main world reads the responses the page already loaded for the logged-in user. Open a profile and the profile JSON is there. Scroll the Reels tab and forty reels arrive with play counts, durations and audio metadata. No extra request is made that Instagram would not have made anyway — no scraping, no stored credentials, no automation of the web session. Being inside the browser is not packaging here; it is the only place this data legally and reliably exists.
+The environment is not packaging here — it is the only viable data path. Instagram's Graph API reports on your own account only, so competitor analysis is closed to it entirely, and Meta's 2026 changes stripped view counts from lookups. Calling Instagram's private endpoints breaks every few weeks when their GraphQL `doc_id` values rotate, is rate-limited to roughly 200 requests an hour per IP, and violates the terms. A standalone chatbot simply cannot obtain this data.
 
-Built with the OpenAI Agents SDK. Four typed specialists — ProfileAnalyst, ReelDecoder, CompetitorAnalyst, Strategist — with every number computed in Python first and handed to them as fact, because models are bad at arithmetic and good at interpretation. Video goes to Gemini, which ingests video natively. The provider layer runs the same agents on OpenAI, Gemini or OpenRouter, whichever you have credits for.
+Inside the browser it is already there. A content script in the page's main world wraps `fetch` and `XMLHttpRequest` and reads the responses **the page already loaded for the logged-in user**. Open a profile and the profile JSON is present. Scroll the Reels tab and dozens of reels arrive with play counts, durations, captions, collaborators and audio metadata. Open a reel and its comments come with it. No request is made that Instagram would not have made anyway: no scraping, no stored credentials, no automation of the web session.
+
+### The environment shapes the workflow
+
+Because the agent lives in the browser, it can do the legwork itself. Competitor analysis needs their reels, and their reels only exist in the page once someone opens the profile and scrolls it — so the agent opens each watched profile in a background tab, scrolls until three consecutive scrolls yield nothing new, closes it, and moves on. Give it a watchlist and a time, and `chrome.alarms` runs that sweep every day and leaves a digest. The creator never scrolls their own account either: pressing Analyze reads their profile to the end first.
+
+And it closes the loop. Every generated idea carries a lead magnet — a comment keyword, a public reply, a DM. Arm it from the panel and the agent watches for that keyword, then delivers the DM through Meta's **official Instagram Messaging API** (private replies), never the web session, because automating DMs through the UI risks the creator's account. The agent wrote the call to action, configured the automation for it, and handles the responses. Analyse → create → act, in one place. That chain cannot exist in a chat window.
+
+### Technical execution
+
+**Agents.** OpenAI Agents SDK with four typed specialists — ProfileAnalyst, ReelDecoder, CompetitorAnalyst, Strategist — each with a Pydantic output contract so the panel renders structured data instead of parsing prose. Every number is computed in Python (`metrics.py`: medians, p90, engagement, breakout detection at median × 3, cadence, duration buckets, audio mix) and handed to the agents as finished fact. Models are bad at arithmetic and good at interpretation, and the split makes the analysis reproducible.
+
+**Provider abstraction.** The Agents SDK is an OpenAI-protocol client, and Gemini and OpenRouter both speak that protocol, so the same agents run unchanged on whichever provider has credits — selected by `LLM_PROVIDER` or by first key found. Providers disagree on strict JSON schema output, so a rejected schema falls back to plain JSON validated locally rather than failing.
+
+**Video.** The Responses API does not accept video, so reel footage goes to Gemini, which ingests video natively and both sees the frames and hears the audio in one call — no ffmpeg, no separate transcription pass.
+
+**Extension.** Manifest V3, no build step. Instagram renames fields constantly, so the normalizer hard-codes no response paths: it walks each payload and recognises objects by shape, covering three real payload formats. Collab reels are filed under every co-author, not just the primary one.
+
+**Degradation.** Every integration degrades instead of crashing. No video key means metadata-only analysis and the panel says so rather than inventing visual details. No Instagram token means rules are stored and logged rather than sent. A missing profile header never blocks analysis.
+
+**Tests.** 37 normalizer checks (three payload shapes, hostile input, cycles) and 24 backend checks (statistics, comparison, keyword matching, never-DM-twice idempotency), plus end-to-end suites that run every flow against the real model and push a real mp4 through the real endpoint — whether a provider accepts inline video is exactly what a fixture cannot prove.
+
+### Honest status
+
+Everything above runs and is verified. The comment-to-DM rules engine is real code against the real API with Meta's constraints enforced locally (one private reply per comment, 7-day window, never your own comment), tested end to end through a simulate endpoint — but it is not yet connected to a live Meta app, so it currently logs "would send" instead of delivering. That is a credential away, not a build away.
+
+Interface in English; hooks, scripts and DMs written in Uzbek, Russian or English.
 
 **Repo:** https://github.com/codewithdoni/reelsense
 
