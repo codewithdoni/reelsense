@@ -89,9 +89,21 @@ function waitFor(type, timeoutMs) {
 
 // --- state -----------------------------------------------------------------
 
+let healedAt = 0;
+
 async function refresh(rerender = true) {
   const s = await bg({ type: "GET_STATE" });
   if (s) state = s;
+
+  // An Instagram tab reporting no context has an orphaned content script,
+  // normally left behind by an extension reload. Refresh it once rather than
+  // showing an empty panel that looks broken.
+  if (state.stale && Date.now() - healedAt > 20_000) {
+    healedAt = Date.now();
+    status("sahifa yangilanmoqda…", true);
+    await bg({ type: "REFRESH_TABS" });
+  }
+
   renderCtx();
   if (rerender) render();
 }
@@ -116,9 +128,13 @@ function renderCtx() {
   // The capture counters are always shown: they separate "nothing was
   // intercepted" from "intercepted but this page has nothing to offer".
   const tot = state.totals || { reels: 0, profiles: 0 };
-  const sub = st.payloads
+  const sub = state.stale
+    ? "sahifa yangilanmoqda…"
+    : st.payloads
     ? `${tot.reels} reel · ${tot.profiles} profil yig'ildi · ${st.payloads} so'rov o'qildi`
-    : "hali ma'lumot yo'q — sahifani yangilang (⌘R)";
+    : state.onInstagram
+    ? "aylantiring — ma'lumot yig'ila boshlaydi"
+    : "Instagram'ni oching";
 
   $(".ctx-main").textContent = main;
   $(".ctx-sub").textContent = sub;

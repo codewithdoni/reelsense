@@ -23,19 +23,23 @@ let saveTimer = null;
 
 // --- persistence -----------------------------------------------------------
 
+// Captured data lives in local rather than session storage. Session storage is
+// wiped whenever the extension reloads, which during development and a demo
+// means losing an account's entire capture history to a single reload.
 async function boot() {
-  const s = await chrome.storage.session.get(STORE_KEY);
+  const s = await chrome.storage.local.get([STORE_KEY, ME_KEY]);
   if (s[STORE_KEY]) store = { ...store, ...s[STORE_KEY] };
   if (!store.stats) store.stats = { payloads: 0, matched: 0, lastAt: 0 };
-  const l = await chrome.storage.local.get(ME_KEY);
-  if (l[ME_KEY]) me = l[ME_KEY];
+  if (s[ME_KEY]) me = s[ME_KEY];
 }
 const ready = boot();
 
 function persist() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    chrome.storage.session.set({ [STORE_KEY]: store }).catch(() => {});
+    chrome.storage.local.set({ [STORE_KEY]: store }).catch((e) => {
+      console.warn("[ReelSense] persist failed", e);
+    });
   }, 400);
 }
 
@@ -236,6 +240,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     ready.then(async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const ctx = (tab && contextByTab[tab.id]) || { kind: "other" };
+      // A tab sitting on instagram.com with no reported context means its
+      // content script is orphaned — the usual cause is an extension reload
+      // without a page refresh, which otherwise looks exactly like a bug.
+      const onInstagram = /^https:\/\/www\.instagram\.com\//.test(tab?.url || "");
+      const stale = onInstagram && !contextByTab[tab.id];
       const target =
         ctx.kind === "profile"
           ? ctx.username
@@ -251,6 +260,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         target: target ? snapshot(target) : null,
         mine: me ? snapshot(me) : null,
         stats: store.stats,
+        stale,
+        onInstagram,
         recent: recentReels(30),
         totals: {
           reels: Object.values(store.profiles).reduce((n, p) => n + Object.keys(p.reels).length, 0),
@@ -281,6 +292,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg?.type === "SET_WATCH") {
     setWatch(msg.patch).then((w) => sendResponse({ ok: true, watch: w }));
+    return true;
+  }
+
+  if (msg?.type === "REFRESH_TABS") {
+    refreshInstagramTabs("panel asked").then(() => sendResponse({ ok: true }));
     return true;
   }
 
@@ -356,10 +372,41 @@ function snapshot(username) {
   };
 }
 
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
+/**
+ * Reloading the extension orphans every content script already on a page, so
+ * capture silently stops until the tab is refreshed by hand. That looks exactly
+ * like a broken extension, so heal it: refresh Instagram tabs ourselves
+ * whenever this worker starts fresh.
+ */
+const recentlyReloaded = new Map();
+
+async function refreshInstagramTabs(reason) {
+  try {
+    const tabs = await chrome.tabs.query({ url: "https://www.instagram.com/*" });
+    for (const tab of tabs) {
+      const last = recentlyReloaded.get(tab.id) || 0;
+      if (Date.now() - last < 15_000) continue;   // never loop on a failing tab
+      recentlyReloaded.set(tab.id, Date.now());
+      await chrome.tabs.reload(tab.id, { bypassCache: false });
+    }
+    if (tabs.length) console.info(`[ReelSense] refreshed ${tabs.length} Instagram tab(s) — ${reason}`);
+  } catch (e) {
+    console.warn("[ReelSense] tab refresh failed", e);
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  refreshInstagramTabs("extension installed or reloaded");
 });
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+chrome.runtime.onStartup?.addListener(() => refreshInstagramTabs("browser started"));
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  delete contextByTab[tabId];
+  recentlyReloaded.delete(tabId);
+});
 
 // --- autonomous competitor sweep -------------------------------------------
 
