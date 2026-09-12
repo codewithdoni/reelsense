@@ -27,17 +27,26 @@ viral reel decode       + a comment CTA         (the rule the agent wrote)
 
 The agent writes the script, puts a call-to-action in it, arms the automation for that exact CTA, and then delivers the DMs when the comments arrive. That chain does not exist in a chat window.
 
-### Five things it does
+### What it does
 
 | | |
 |---|---|
-| **Profile audit** | What separates your best reels from your worst — hook style, duration, audio, cadence — with three things to do next. |
+| **Profile audit** | What separates your best reels from your worst — hook style, duration, audio, cadence — with three things to do next. The agent reads your profile to the end itself first; you never scroll your own account. |
 | **Reel decoder** | Watches and *hears* any reel: hook, beat-by-beat structure, on-screen text, pacing, transcript. Then rewrites the format as a script in your voice. |
 | **Competitor compare** | Side-by-side metrics, their breakout reels (median × 3), what their audience keeps asking for that nobody answers, and 5 transferable formats with hooks already written for your niche. |
+| **Autonomous sweep** | Give it a watchlist and it visits each profile itself — background tab, scroll until the feed stops yielding, close, next. |
+| **Daily schedule** | Pick a time and the sweep runs every day, leaving a digest and a notification. |
 | **Ideas & scripts** | Five reels you can shoot this week, each traced back to evidence, each with a lead magnet. |
 | **Comment → DM** | Arm a keyword, and the official Instagram Messaging API delivers the private reply when someone comments it. |
+| **Chat** | A strategist that can see everything captured, so answers are about this account rather than social media in general. |
 
-Scripts are written in Uzbek, Russian or English.
+The interface is in English; scripts, hooks and DMs are written in Uzbek, Russian or English.
+
+### The agent does its own legwork
+
+Analysing a competitor needs their reels, and their reels only exist in the page once somebody has opened the profile and scrolled it. Rather than making that the creator's job, the agent drives the browser: it opens each watched profile in a background tab, scrolls until three consecutive scrolls yield nothing new, closes it, and moves on.
+
+It is deliberately gentle. It visits pages a logged-in human could visit, at human pace, one at a time, and still reads only what the page loads on its own. No private endpoints, no parallel tabs, no interaction with anyone's content.
 
 ## How it gets its data
 
@@ -69,9 +78,10 @@ Production would subscribe to the `comments` webhook. This build polls every 10 
 instagram.com (logged in)
   │
   ├─ interceptor.js   MAIN world — wraps fetch/XHR, reads what the page loaded
-  ├─ content.js       relays payloads, tracks which page you are on (SPA-aware)
+  ├─ content.js       relays payloads, tracks the page, reads the profile header
+  ├─ crawler.js       opens and scrolls watched profiles by itself
   └─ background.js    normalizes and accumulates: profiles, reels, comments
-        │
+        │             + chrome.alarms for the daily sweep
         ▼
    Side panel (vanilla MV3, no build step)
         │  JSON over localhost
@@ -114,7 +124,14 @@ Open instagram.com and click the ReelSense icon. Visit your profile, scroll the 
 ```bash
 .venv/bin/python -m scripts.smoke        # statistics, comparison, rules engine
 node extension/test/extract.test.mjs     # payload normalizer, 3 real shapes
+.venv/bin/python -m scripts.e2e all      # every flow against the real model
+.venv/bin/python -m scripts.e2e video    # real mp4 through the real endpoint
 ```
+
+The unit suites are free and offline. The end-to-end runs spend real credits —
+a full pass over every flow, video included, costs under two cents — because
+whether a provider actually accepts inline video is exactly the kind of
+integration a fixture cannot prove.
 
 ## Configuration
 
@@ -141,7 +158,7 @@ Every integration degrades instead of crashing: no video key means metadata-only
 
 ## Boundaries
 
-- Reads only what the logged-in user's own browser already loaded. No credential storage, no scraping, no session automation.
+- Reads only what the logged-in user's own browser already loaded, plus the pages the agent opens on the creator's behalf. No credential storage, no private endpoints, no session automation.
 - No follows, likes, mass-DMs or engagement automation. The only outbound action is a private reply to someone who chose to comment a keyword.
 - A personal research and authoring tool, not an Instagram product.
 
