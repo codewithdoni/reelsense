@@ -217,17 +217,17 @@ async def _process_comment(client: httpx.AsyncClient, comment: dict, me: str) ->
         try:
             await send_private_reply(client, cid, compose(rule))
             rule["sent_count"] += 1
-            action = "DM yuborildi"
+            action = "DM sent"
             if rule.get("public_reply"):
                 try:
                     await send_public_reply(client, cid, rule["public_reply"])
-                    action += " + ochiq javob"
+                    action += " + public reply"
                 except Exception as exc:  # noqa: BLE001
                     log.warning("public reply failed: %s", exc)
             _record(author, text, action)
             log.info("DM sent to @%s for %r", author, rule["keyword"])
         except Exception as exc:  # noqa: BLE001
-            _record(author, text, f"xato: {str(exc)[:80]}")
+            _record(author, text, f"error: {str(exc)[:80]}")
             log.warning("private reply failed: %s", exc)
         _save(STATE)
         return

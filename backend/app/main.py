@@ -95,7 +95,7 @@ async def health():
 @app.post("/analyze/profile")
 async def analyze_profile(req: AnalyzeProfileReq):
     if not req.reels:
-        raise HTTPException(400, "Hech qanday reel yig'ilmadi — Reels tabini aylantiring.")
+        raise HTTPException(400, "No reels captured yet — scroll the Reels tab.")
     stats = summarize(req.reels, req.profile.followers)
     try:
         report = await brain.analyze_profile(
@@ -136,7 +136,7 @@ async def analyze_reel(req: AnalyzeReelReq):
 @app.post("/compare")
 async def compare(req: CompareReq):
     if not req.them.reels:
-        raise HTTPException(400, "Raqobatchining reellari yig'ilmadi — uning Reels tabini aylantiring.")
+        raise HTTPException(400, "No reels captured for this competitor — scroll their Reels tab.")
     mine = summarize(req.me.reels, req.me.profile.followers)
     theirs = summarize(req.them.reels, req.them.profile.followers)
     table = compare_table(mine, theirs, req.me.profile.followers, req.them.profile.followers)
@@ -185,14 +185,14 @@ async def generate_ideas(req: IdeasReq):
 @app.get("/trends")
 async def get_trends(niche: str):
     if not exa.configured():
-        raise HTTPException(400, "EXA_API_KEY sozlanmagan")
+        raise HTTPException(400, "EXA_API_KEY is not configured")
     return {"niche": niche, "items": await exa.trends(niche)}
 
 
 @app.get("/discover")
 async def discover(username: str):
     if not exa.configured():
-        raise HTTPException(400, "EXA_API_KEY sozlanmagan")
+        raise HTTPException(400, "EXA_API_KEY is not configured")
     return {"seed": username, "accounts": await exa.similar_accounts(username)}
 
 
@@ -228,7 +228,7 @@ async def automation_state():
 @app.post("/automation/rules")
 async def create_rule(req: RuleReq):
     if not req.keyword or not req.dm_text:
-        raise HTTPException(400, "Kalit so'z va DM matni kerak.")
+        raise HTTPException(400, "Keyword and DM text are required.")
     return dm.add_rule(req.keyword, req.dm_text, req.public_reply, req.link)
 
 
@@ -236,7 +236,7 @@ async def create_rule(req: RuleReq):
 async def toggle_rule(req: ToggleReq):
     rule = dm.toggle_rule(req.id)
     if not rule:
-        raise HTTPException(404, "Qoida topilmadi")
+        raise HTTPException(404, "Rule not found")
     return rule
 
 
