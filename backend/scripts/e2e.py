@@ -1,13 +1,17 @@
 """End-to-end check against a running server, using a realistic captured account.
 
-    .venv/bin/python -m scripts.e2e [profile|ideas|compare|reel|all]
+    .venv/bin/python -m scripts.e2e [profile|ideas|compare|reel|video|all]
 
 Exercises the real model path — the same request bodies the side panel sends.
+`video` additionally spends a few cents proving the provider really accepts
+inline video, which is the one integration a mocked payload cannot verify.
 """
 
 from __future__ import annotations
 
+import base64
 import json
+import pathlib
 import sys
 import time
 
@@ -187,6 +191,37 @@ def run_reel() -> dict:
     return rep
 
 
+SAMPLE_VIDEO = "https://download.samplelib.com/mp4/sample-5s.mp4"
+SAMPLE_PATH = pathlib.Path("/tmp/reelsense-sample.mp4")
+
+
+def run_video() -> dict:
+    """Prove the provider accepts inline video, not just that our code compiles."""
+    print("\n=== reel decode (real video bytes) ===")
+    if not SAMPLE_PATH.exists():
+        print("  downloading sample clip…")
+        SAMPLE_PATH.write_bytes(httpx.get(SAMPLE_VIDEO, follow_redirects=True, timeout=120).content)
+    b64 = base64.b64encode(SAMPLE_PATH.read_bytes()).decode()
+    print(f"  {len(b64) * 3 // 4:,} bytes in")
+
+    rep = post("/analyze/reel", {
+        "reel": {**mk(REELS, "fitwithaziz")[0], "video_url": None},
+        "comments": COMMENTS,
+        "my_profile": PROFILE,
+        "video_b64": b64,
+        "lang": "uz",
+    })
+    print(f"\n  saw_video: {rep['saw_video']}")
+    if not rep["saw_video"]:
+        print("  ✗ the provider did not accept the video — check REELSENSE_VIDEO_MODEL "
+              "supports the `video` input modality")
+        sys.exit(1)
+    show("hook", rep["hook"])
+    show("on screen text", rep["on_screen_text"])
+    show("transcript", rep["transcript"])
+    return rep
+
+
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     health = httpx.get(BASE + "/health", timeout=5).json()
@@ -205,4 +240,6 @@ if __name__ == "__main__":
         run_ideas(prof, comp)
     if which in ("reel", "all"):
         run_reel()
+    if which == "video":
+        run_video()
     print("\ndone\n")

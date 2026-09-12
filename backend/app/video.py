@@ -24,7 +24,9 @@ log = logging.getLogger("reelsense.video")
 
 OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
-VIDEO_MODEL = os.getenv("REELSENSE_VIDEO_MODEL") or "google/gemini-3-flash"
+# Must be a model that accepts video input, which is a much shorter list than
+# the text models — check the `video` input modality before swapping this.
+VIDEO_MODEL = os.getenv("REELSENSE_VIDEO_MODEL") or "google/gemini-3.5-flash-lite"
 GEMINI_MODEL = os.getenv("REELSENSE_GEMINI_MODEL") or "gemini-3.6-flash"
 MAX_BYTES = 19_000_000  # inline video ceiling
 

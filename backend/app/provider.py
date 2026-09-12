@@ -44,8 +44,8 @@ PROVIDERS = {
     "openrouter": {
         "key_env": "OPENROUTER_API_KEY",
         "base_url": "https://openrouter.ai/api/v1",
-        "default_model": "google/gemini-3-flash",
-        "fallbacks": ["google/gemini-2.5-flash", "openai/gpt-4o-mini"],
+        "default_model": "openai/gpt-5.6-luna",
+        "fallbacks": ["google/gemini-3.5-flash-lite", "openai/gpt-4o-mini"],
         "native": False,
     },
 }
