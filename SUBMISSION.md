@@ -24,7 +24,7 @@ The environment is what makes it possible. Instagram's official API only reports
 
 Built with the OpenAI Agents SDK. Four typed specialists — ProfileAnalyst, ReelDecoder, CompetitorAnalyst, Strategist — with every number computed in Python first and handed to them as fact, because models are bad at arithmetic and good at interpretation. Video goes to Gemini, which ingests video natively. The provider layer runs the same agents on OpenAI, Gemini or OpenRouter, whichever you have credits for.
 
-**Repo:** <paste GitHub URL>
+**Repo:** https://github.com/codewithdoni/reelsense
 
 ---
 
@@ -42,7 +42,7 @@ Built with the OpenAI Agents SDK. Four typed specialists — ProfileAnalyst, Ree
 >
 > Built with @OpenAI Agents SDK · @OpenRouterAI · thanks @aitinkerers, Impact Hub Tashkent & ML Community Uzbekistan
 >
-> Code 👇 <repo link>
+> Code 👇 https://github.com/codewithdoni/reelsense
 
 Check the exact handles before posting.
 
