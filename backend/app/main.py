@@ -10,14 +10,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import FastAPI, HTTPException, Request  # noqa: E402
+from fastapi.exceptions import RequestValidationError  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
 
 from . import brain, dm, exa, provider, video  # noqa: E402
 from .metrics import compare_table, summarize  # noqa: E402
 from .schemas import (  # noqa: E402
     AnalyzeProfileReq,
     AnalyzeReelReq,
+    ChatReq,
     CompareReq,
     IdeasReq,
     RuleReq,
@@ -60,6 +63,18 @@ app.add_middleware(
 def _fail(exc: Exception) -> HTTPException:
     log.exception("request failed")
     return HTTPException(status_code=500, detail=str(exc)[:400])
+
+
+@app.exception_handler(RequestValidationError)
+async def on_validation_error(request: Request, exc: RequestValidationError):
+    """Captured Instagram payloads are messy and shapes drift. Log exactly which
+    field was rejected so a schema mismatch is a one-line diagnosis."""
+    problems = [
+        {"field": ".".join(str(p) for p in e.get("loc", []) if p != "body"), "problem": e.get("msg")}
+        for e in exc.errors()
+    ]
+    log.warning("422 on %s: %s", request.url.path, problems)
+    return JSONResponse(status_code=422, content={"detail": problems})
 
 
 @app.get("/health")
@@ -179,6 +194,20 @@ async def discover(username: str):
     if not exa.configured():
         raise HTTPException(400, "EXA_API_KEY sozlanmagan")
     return {"seed": username, "accounts": await exa.similar_accounts(username)}
+
+
+@app.post("/chat")
+async def chat(req: ChatReq):
+    try:
+        answer = await brain.chat(
+            req.question,
+            req.context,
+            [m.model_dump() for m in req.history],
+            req.lang,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise _fail(exc) from exc
+    return {"answer": answer}
 
 
 # --- automation ------------------------------------------------------------

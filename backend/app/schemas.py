@@ -164,6 +164,18 @@ class IdeasReq(BaseModel):
     lang: Lang = "uz"
 
 
+class ChatMsg(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatReq(BaseModel):
+    question: str
+    context: dict = Field(default_factory=dict)
+    history: list[ChatMsg] = Field(default_factory=list)
+    lang: Lang = "uz"
+
+
 class RuleReq(BaseModel):
     keyword: str
     public_reply: str = ""

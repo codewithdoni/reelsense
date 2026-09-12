@@ -78,12 +78,32 @@ export function mapReel(o) {
   const videoUrl =
     o.video_versions?.[0]?.url || o.video_url || o.video_versions?.url || null;
 
+  // A collab reel is authored by one account but belongs to all of them, and
+  // Instagram only puts the primary author in `user`. Without this the reel is
+  // filed under a partner and disappears from the creator's own analysis.
+  const coauthors = [
+    ...(o.coauthor_producers || []),
+    ...(o.invited_coauthor_producers || []),
+  ]
+    .map((c) => c?.username)
+    .filter(Boolean);
+
   return {
     code: o.code || o.shortcode,
     id: o.pk || o.id || null,
     username: o.user?.username || o.owner?.username || null,
+    coauthors,
     caption: text(o.caption, o.edge_media_to_caption, o.caption_text) || "",
-    views: num(o.play_count, o.ig_play_count, o.view_count, o.video_play_count) || 0,
+    views:
+      num(
+        o.play_count,
+        o.ig_play_count,
+        o.view_count,
+        o.video_play_count,
+        o.video_view_count,
+        o.media_overlay_info?.play_count,
+        o.feed_preview_metadata?.play_count
+      ) || 0,
     likes: num(o.like_count, o.edge_media_preview_like, o.edge_liked_by) || 0,
     comments: num(
       o.comment_count,
@@ -146,6 +166,7 @@ export function extract(payload, maxNodes = 40000) {
   const users = new Map();
   const comments = new Map();
   const seen = new Set();
+  let sample = null;   // scalar keys of one raw reel node, for diagnosing shape changes
   let visited = 0;
 
   const stack = [payload];
@@ -163,6 +184,7 @@ export function extract(payload, maxNodes = 40000) {
 
     try {
       if (looksLikeReel(node)) {
+        if (!sample) sample = scalarKeys(node);
         const r = mapReel(node);
         const prev = reels.get(r.code);
         // Prefer the richer record (detail views carry video_url + full caption).
@@ -193,5 +215,23 @@ export function extract(payload, maxNodes = 40000) {
     reels: [...reels.values()],
     users: [...users.values()],
     comments: [...comments.values()],
+    sample,
   };
+}
+
+/**
+ * Every scalar field on a node, plus the names of its object fields. Instagram
+ * moves counters between releases, so when a number comes back zero this shows
+ * where it went without having to dump a megabyte of payload.
+ */
+function scalarKeys(node) {
+  const out = {};
+  for (const [k, v] of Object.entries(node)) {
+    if (v === null || v === undefined) continue;
+    const t = typeof v;
+    if (t === "number" || t === "boolean" || (t === "string" && v.length < 60)) out[k] = v;
+    else if (Array.isArray(v)) out[k] = `[array:${v.length}]`;
+    else if (t === "object") out[k] = `{${Object.keys(v).slice(0, 12).join(",")}}`;
+  }
+  return out;
 }

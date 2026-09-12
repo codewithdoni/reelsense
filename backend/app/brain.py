@@ -217,6 +217,50 @@ genuinely fits the creator — a forced trend is worse than an evergreen idea.
 """
 
 
+CHAT_INSTRUCTIONS = """
+You are the creator's strategist, talking in the side panel while they browse
+Instagram. You can see what ReelSense has captured: their profile, the account
+or reel currently on screen, the statistics computed from it, and any analysis
+already run this session.
+
+Answer from that captured context. When they ask about something not in it, say
+what is missing and what to open or scroll so it gets captured — you are sitting
+inside their browser, so that is always a concrete instruction.
+
+Keep replies short: a few sentences, or a tight list. Give the specific answer,
+not a lecture. If they ask for a hook, a caption or a script, just write it.
+"""
+
+
+async def chat(question: str, context: dict, history: list[dict], lang: str) -> str:
+    agent = Agent(
+        name="Strategist",
+        instructions=(
+            HOUSE_RULES
+            + CHAT_INSTRUCTIONS
+            + f"\nReply in {LANG_NAMES.get(lang, 'Uzbek')}."
+        ),
+        model=provider.model_for(provider.MODEL),
+    )
+    transcript = "\n".join(f"{m['role']}: {m['content']}" for m in history[-8:])
+    payload = json.dumps(
+        {"captured_context": context, "conversation": transcript, "question": question},
+        ensure_ascii=False,
+        default=str,
+    )
+    try:
+        return str((await Runner.run(agent, payload)).final_output)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("chat failed on %s: %s", provider.MODEL, exc)
+        for fallback in provider.FALLBACKS:
+            try:
+                agent.model = provider.model_for(fallback)
+                return str((await Runner.run(agent, payload)).final_output)
+            except Exception:  # noqa: BLE001
+                continue
+        raise
+
+
 async def make_ideas(profile_report: dict, competitor_report: dict | None,
                      reel_reports: list[dict], lang: str,
                      trends: list[dict] | None = None) -> IdeaPack:

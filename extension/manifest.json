@@ -3,7 +3,7 @@
   "name": "ReelSense — AI social media manager inside Instagram",
   "version": "0.1.0",
   "description": "Analyzes your profile, competitors and viral reels from inside instagram.com, writes scripts in your voice, and runs comment-to-DM automations.",
-  "permissions": ["sidePanel", "storage", "tabs", "scripting"],
+  "permissions": ["sidePanel", "storage", "tabs", "scripting", "alarms", "notifications"],
   "host_permissions": [
     "https://www.instagram.com/*",
     "https://*.cdninstagram.com/*",

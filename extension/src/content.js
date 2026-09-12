@@ -75,6 +75,31 @@
   setInterval(reportContext, 1500); // catches soft navigations we miss
   reportContext();
 
+  // --- profile fallback ----------------------------------------------------
+  // Instagram server-renders the profile page and embeds the initial data in
+  // the HTML, so opening a profile fires no request for us to read. This asks
+  // for the same JSON the page would have fetched, once, from the page's own
+  // origin and session — the one request ReelSense ever initiates.
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "FETCH_PROFILE") return;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/v1/users/web_profile_info/?username=${encodeURIComponent(msg.username)}`,
+          {
+            credentials: "include",
+            headers: { "x-ig-app-id": "936619743392459", "x-requested-with": "XMLHttpRequest" },
+          }
+        );
+        if (!res.ok) return sendResponse({ ok: false, error: `HTTP ${res.status}` });
+        sendResponse({ ok: true, body: await res.json() });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e) });
+      }
+    })();
+    return true;
+  });
+
   // --- media fetch helper --------------------------------------------------
   // Instagram CDN often rejects server-side requests. The page itself can fetch
   // its own video, so the backend asks us to do it and we forward the bytes.

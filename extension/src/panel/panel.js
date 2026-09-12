@@ -43,8 +43,25 @@ async function api(path, body) {
   } catch {
     throw new Error(`Backend ${res.status}: ${txt.slice(0, 200)}`);
   }
-  if (!res.ok) throw new Error(data.detail || data.error || `Backend ${res.status}`);
+  if (!res.ok) throw new Error(describeError(data, res.status));
   return data;
+}
+
+/** FastAPI returns validation failures as a list of objects; rendering that
+ *  straight into an Error gives "[object Object]" and hides the real cause. */
+function describeError(data, statusCode) {
+  const d = data?.detail ?? data?.error;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    return d
+      .map((e) => {
+        const where = Array.isArray(e.loc) ? e.loc.filter((p) => p !== "body").join(".") : "";
+        return `${where || "payload"}: ${e.msg || JSON.stringify(e)}`;
+      })
+      .join("\n");
+  }
+  if (d) return JSON.stringify(d);
+  return `Backend ${statusCode}`;
 }
 
 const lang = () => el("lang").value;
@@ -235,7 +252,9 @@ function renderReel() {
       list
         .map(
           (r) => `<div class="card pick" data-code="${esc(r.code)}" style="cursor:pointer">
-            <h4>@${esc(r.username || "—")} <span class="badge">${fmt(r.views)} ko'rish</span></h4>
+            <h4>@${esc(r.username || "—")}
+              <span class="badge">${r.views ? fmt(r.views) + " ko'rish" : fmt(r.likes) + " like"}</span>
+            </h4>
             <div class="small muted">${esc((r.caption || "(caption yo'q)").slice(0, 90))}</div>
           </div>`
         )
@@ -343,7 +362,7 @@ function paintReel(rep, reel, code) {
 
 // --- competitor ------------------------------------------------------------
 
-function renderCompetitor() {
+async function renderCompetitor() {
   const v = "view-competitor";
   const c = state.context;
   const t = state.target;
@@ -353,14 +372,8 @@ function renderCompetitor() {
     return;
   }
   if (c.kind !== "profile" || c.username === state.me) {
-    el(v).innerHTML = `
-      <div class="empty">Raqobatchining profilini oching, so'ng bu yerga qayting.</div>
-      ${
-        state.suggested?.length
-          ? `<div class="card"><h4>Instagram taklif qilgan o'xshash akkauntlar</h4>
-               ${listHtml(state.suggested)}</div>`
-          : ""
-      }`;
+    el(v).innerHTML = await watchlistHtml();
+    await wireWatchlist();
     return;
   }
 
@@ -370,9 +383,19 @@ function renderCompetitor() {
   el(v).innerHTML = `
     ${t ? profileHead(t, false) : ""}
     <button class="primary" id="cmp" ${t && state.mine ? "" : "disabled"}>@${esc(c.username)} bilan solishtirish</button>
+    <div class="row end" style="margin-top:7px">
+      <button class="ghost tiny" id="addwatch">+ kuzatuv ro'yxatiga</button>
+    </div>
     <div class="small muted" style="margin-top:8px">
       Uning Reels tabini aylantiring — breakout (median×3) reellari aniqlanadi va format shabloni ajratiladi.
     </div>`;
+
+  el("addwatch")?.addEventListener("click", async () => {
+    const w = (await bg({ type: "GET_WATCH" })).watch;
+    const names = [...new Set([...w.usernames, c.username])];
+    await bg({ type: "SET_WATCH", patch: { usernames: names } });
+    status(`@${c.username} kuzatuv ro'yxatiga qo'shildi`);
+  });
 
   el("cmp")?.addEventListener("click", async () => {
     loading(v, "Raqobatchi tahlil qilinmoqda…");
@@ -391,6 +414,118 @@ function renderCompetitor() {
       failure(v, e);
       status("xato");
     }
+  });
+}
+
+// --- watchlist: the agent visits competitors itself ------------------------
+
+async function watchlistHtml() {
+  const { watch, crawl, digest } = await bg({ type: "GET_WATCH" });
+  cache.watch = watch;
+
+  const progress = crawl?.running
+    ? `<div class="card">
+         <h4><span class="spin"></span> Agent ishlayapti</h4>
+         <div class="small">Hozir: <b>@${esc(crawl.current?.username || "…")}</b> —
+           ${crawl.current?.reels ?? 0} reel yig'ildi</div>
+         <div class="small muted" style="margin-top:4px">
+           Tugadi: ${crawl.done?.length || 0} / ${(crawl.done?.length || 0) + (crawl.queue?.length || 0)}</div>
+         <div class="row end" style="margin-top:7px">
+           <button class="ghost tiny" id="cancelsweep">To'xtatish</button>
+         </div>
+       </div>`
+    : crawl?.done?.length
+    ? `<div class="card"><h4>Oxirgi yurish</h4>
+         ${crawl.done
+           .map((d) => `<div class="kv"><span>@${esc(d.username)}</span><span>${d.reels} reel ${d.gained ? `(+${d.gained})` : ""}</span></div>`)
+           .join("")}</div>`
+    : "";
+
+  const digestHtml = digest?.competitors?.length
+    ? `<div class="card">
+         <h4>Kunlik xulosa <span class="badge">${new Date(digest.at).toLocaleString()}</span></h4>
+         ${digest.competitors
+           .map((cmp) => {
+             const steal = cmp.report?.steal_these?.[0];
+             return `<div style="margin-bottom:9px">
+               <div style="font-weight:600;font-size:12px">@${esc(cmp.username)} · ${cmp.reels} reel</div>
+               ${cmp.report?.gaps?.[0] ? `<div class="small muted">Bo'shliq: ${esc(cmp.report.gaps[0].slice(0, 130))}</div>` : ""}
+               ${steal ? `<div class="small">O'zlashtiring: ${esc(steal.format.slice(0, 110))}</div>` : ""}
+             </div>`;
+           })
+           .join("")}
+       </div>`
+    : "";
+
+  return `
+    <div class="card">
+      <h4>Raqobatchilar ro'yxati</h4>
+      <div class="small muted">Agent har birining profiliga o'zi kiradi, Reels tabini aylantiradi va ma'lumotni yig'adi.</div>
+      <label class="f">Har qatorga bitta username</label>
+      <textarea class="f" id="wl" placeholder="sport.hamrohingiz&#10;another_account">${esc((watch.usernames || []).join("\n"))}</textarea>
+      <div style="height:8px"></div>
+      <button class="primary" id="sweep">Hozir tahlil qilish</button>
+    </div>
+
+    <div class="card">
+      <h4>Har kuni avtomatik</h4>
+      <div class="row" style="gap:8px;align-items:center">
+        <input class="f" id="wtime" type="time" style="width:auto"
+               value="${String(watch.hour).padStart(2, "0")}:${String(watch.minute).padStart(2, "0")}" />
+        <label class="small" style="display:flex;gap:6px;align-items:center;margin:0">
+          <input type="checkbox" id="wen" ${watch.enabled ? "checked" : ""} /> yoqilgan
+        </label>
+      </div>
+      <div class="small muted" style="margin-top:6px">
+        Belgilangan vaqtda agent ro'yxatni aylanib chiqadi va tayyor bo'lganda bildirishnoma yuboradi.
+      </div>
+    </div>
+
+    ${progress}
+    ${digestHtml}
+
+    ${
+      state.suggested?.length
+        ? `<div class="card"><h4>Instagram taklif qilgan o'xshash akkauntlar</h4>${listHtml(state.suggested)}</div>`
+        : ""
+    }
+    <div class="small muted">Bitta raqobatchini qo'lda solishtirish uchun uning profilini oching.</div>`;
+}
+
+async function wireWatchlist() {
+  const save = async () => {
+    const usernames = (el("wl")?.value || "")
+      .split(/[\n,]/)
+      .map((s) => s.trim().replace(/^@/, ""))
+      .filter(Boolean);
+    const [h, m] = (el("wtime")?.value || "09:00").split(":").map(Number);
+    return bg({
+      type: "SET_WATCH",
+      patch: { usernames, hour: h || 0, minute: m || 0, enabled: !!el("wen")?.checked },
+    });
+  };
+
+  el("wl")?.addEventListener("change", save);
+  el("wtime")?.addEventListener("change", async () => {
+    await save();
+    status("jadval yangilandi");
+  });
+  el("wen")?.addEventListener("change", async () => {
+    const r = await save();
+    status(r.watch.enabled ? "kunlik tahlil yoqildi" : "kunlik tahlil o'chirildi");
+  });
+
+  el("sweep")?.addEventListener("click", async () => {
+    await save();
+    const r = await bg({ type: "RUN_SWEEP" });
+    if (!r?.ok) return status(r?.error || "xato");
+    status("agent raqobatchilarni aylanmoqda…", true);
+    renderCompetitor();
+  });
+
+  el("cancelsweep")?.addEventListener("click", async () => {
+    await bg({ type: "CANCEL_SWEEP" });
+    status("to'xtatildi");
   });
 }
 
@@ -639,6 +774,84 @@ async function renderAuto() {
   );
 }
 
+// --- chat ------------------------------------------------------------------
+
+const chatLog = [];
+
+function renderChat() {
+  const v = "view-chat";
+  if (!el(v).dataset.ready) {
+    el(v).dataset.ready = "1";
+    el(v).innerHTML = `
+      <div id="chatlog"></div>
+      <div class="card" style="position:sticky;bottom:0">
+        <textarea class="f" id="q" placeholder="Masalan: shu reelga kuchliroq hook yozib ber"></textarea>
+        <div style="height:7px"></div>
+        <button class="primary" id="ask">So'rash</button>
+      </div>`;
+    el("ask").addEventListener("click", ask);
+    el("q").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) ask();
+    });
+  }
+  paintChat();
+}
+
+function paintChat() {
+  const log = el("chatlog");
+  if (!log) return;
+  log.innerHTML = chatLog.length
+    ? chatLog
+        .map(
+          (m) => `<div class="card" style="${m.role === "user" ? "background:#0e0e14" : ""}">
+            <div class="small muted" style="margin-bottom:4px">${m.role === "user" ? "Siz" : "ReelSense"}</div>
+            <div class="small" style="white-space:pre-wrap">${esc(m.content)}</div>
+          </div>`
+        )
+        .join("")
+    : `<div class="empty">Ochiq turgan profil yoki reel haqida so'rang.<br>
+         Agent nima yig'ilganini ko'rib turadi.</div>`;
+  log.scrollIntoView({ block: "end" });
+}
+
+async function ask() {
+  const q = el("q").value.trim();
+  if (!q) return;
+  el("q").value = "";
+  chatLog.push({ role: "user", content: q });
+  paintChat();
+  status("o'ylanmoqda…", true);
+
+  try {
+    // Hand over what is on screen plus whatever has already been analysed, so
+    // the answer is about this account rather than social media in general.
+    const res = await api("/chat", {
+      question: q,
+      lang: lang(),
+      history: chatLog.slice(0, -1),
+      context: {
+        page: state.context,
+        me: state.mine?.profile || null,
+        my_reels: (state.mine?.reels || []).slice(0, 20),
+        on_screen_account: state.target?.profile || null,
+        on_screen_reels: (state.target?.reels || []).slice(0, 20),
+        profile_report: cache.profileReport || null,
+        competitor_report: cache.lastCompetitor?.report || null,
+        decoded_reels: Object.entries(cache)
+          .filter(([k]) => k.startsWith("reel:"))
+          .map(([, r]) => r)
+          .slice(0, 3),
+      },
+    });
+    chatLog.push({ role: "assistant", content: res.answer });
+    status("tayyor");
+  } catch (e) {
+    chatLog.push({ role: "assistant", content: "Xato: " + e.message });
+    status("xato");
+  }
+  paintChat();
+}
+
 // --- tabs ------------------------------------------------------------------
 
 function switchTab(name) {
@@ -654,11 +867,30 @@ function render() {
   else if (activeTab === "competitor") renderCompetitor();
   else if (activeTab === "ideas") renderIdeas();
   else if (activeTab === "auto") renderAuto();
+  else if (activeTab === "chat") renderChat();
 }
 
 document.querySelectorAll(".tab").forEach((t) =>
   t.addEventListener("click", () => switchTab(t.dataset.tab))
 );
+
+// Clicking the status bar copies a shape report. Instagram moves fields between
+// releases, and this says exactly which ones a captured reel carries today.
+el("status").style.cursor = "pointer";
+el("status").title = "Diagnostikani nusxalash";
+el("status").addEventListener("click", () => {
+  const diag = {
+    context: state.context,
+    me: state.me,
+    totals: state.totals,
+    payloads: state.stats?.payloads,
+    sampleReelFields: state.stats?.sample || null,
+    firstCapturedReel: state.recent?.[0] || null,
+    profileCaptured: state.mine?.profile || state.target?.profile || null,
+  };
+  navigator.clipboard.writeText(JSON.stringify(diag, null, 2));
+  status("diagnostika nusxalandi — menga yuboring");
+});
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "CONTEXT_CHANGED") {
@@ -669,6 +901,9 @@ chrome.runtime.onMessage.addListener((msg) => {
     // More reels captured. Refresh the counters, but never wipe a rendered report
     // or a half-filled automation form out from under the user.
     refresh(false);
+  } else if (msg?.type === "CRAWL_PROGRESS" || msg?.type === "DIGEST_READY") {
+    if (activeTab === "competitor") renderCompetitor();
+    if (msg.type === "DIGEST_READY") status("kunlik xulosa tayyor");
   }
 });
 

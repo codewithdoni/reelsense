@@ -5,9 +5,14 @@
 // an open reel, and which account is "me".
 
 import { extract } from "./lib/ig.js";
+import { Crawler } from "./crawler.js";
 
 const STORE_KEY = "rs_store";
 const ME_KEY = "rs_me";
+const WATCH_KEY = "rs_watch";      // { usernames: [], hour: 9, minute: 0, enabled: bool }
+const DIGEST_KEY = "rs_digest";
+const ALARM = "rs_daily";
+const API = "http://localhost:8000";
 
 /** @type {{profiles: Record<string, any>, suggested: string[], stats: any}} */
 let store = { profiles: {}, suggested: [], stats: { payloads: 0, matched: 0, lastAt: 0 } };
@@ -51,8 +56,10 @@ function bucket(username) {
 
 function ingest(url, body, tabId) {
   const ctx = contextByTab[tabId] || {};
-  const { reels, users, comments } = extract(body);
+  const { reels, users, comments, sample } = extract(body);
   let touched = false;
+
+  if (sample && !store.stats.sample) store.stats.sample = sample;
 
   // Counters make the difference between "nothing was intercepted" and
   // "intercepted but nothing recognised" visible in the panel.
@@ -62,7 +69,7 @@ function ingest(url, body, tabId) {
 
   for (const u of users) {
     const b = bucket(u.username);
-    b.profile = { ...(b.profile || {}), ...u };
+    b.profile = mergeProfile(b.profile, u);
     b.updatedAt = Date.now();
     touched = true;
   }
@@ -77,10 +84,14 @@ function ingest(url, body, tabId) {
       }
     }
     if (!r.username) continue;
-    const b = bucket(r.username);
-    const prev = b.reels[r.code];
-    b.reels[r.code] = { ...(prev || {}), ...r, capturedAt: prev?.capturedAt || Date.now() };
-    b.updatedAt = Date.now();
+    // File the reel under the author and every collaborator: a collab reel is
+    // as much the creator's work as the partner's, and Instagram names only one.
+    for (const owner of new Set([r.username, ...(r.coauthors || [])])) {
+      const b = bucket(owner);
+      const prev = b.reels[r.code];
+      b.reels[r.code] = { ...(prev || {}), ...r, capturedAt: prev?.capturedAt || Date.now() };
+      b.updatedAt = Date.now();
+    }
     touched = true;
   }
 
@@ -116,6 +127,52 @@ function ingest(url, body, tabId) {
   }
 }
 
+/**
+ * The same account appears in many payloads at very different fidelities: the
+ * profile header carries follower counts and bio, while a reel's embedded
+ * `user` carries little more than a username. A plain spread lets the thin
+ * version overwrite the rich one and blanks the numbers, so merge per field
+ * and only ever trade up.
+ */
+function mergeProfile(prev, next) {
+  if (!prev) return next;
+  const out = { ...prev };
+  for (const [k, v] of Object.entries(next)) {
+    if (v === null || v === undefined || v === "") continue;
+    if (typeof v === "number" && v === 0 && typeof out[k] === "number" && out[k] > 0) continue;
+    if (v === false && out[k] === true) continue;
+    if (typeof v === "string" && typeof out[k] === "string" && v.length < out[k].length) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+const askedFor = new Set();
+
+/**
+ * Instagram server-renders the profile page, embedding the initial data in the
+ * HTML, so simply opening a profile produces no request to read. Ask the page
+ * to fetch the same JSON once, from its own origin and session.
+ */
+async function ensureProfile(username, tabId) {
+  if (!username || askedFor.has(username)) return;
+  await ready;
+  if (store.profiles[username]?.profile?.followers) return;
+  askedFor.add(username);
+
+  chrome.tabs.sendMessage(tabId, { type: "FETCH_PROFILE", username }, (res) => {
+    if (chrome.runtime.lastError || !res?.ok) {
+      askedFor.delete(username);
+      return;
+    }
+    try {
+      ingest("web_profile_info", res.body, tabId);
+    } catch (e) {
+      console.warn("[ReelSense] profile fallback ingest failed", e);
+    }
+  });
+}
+
 function setMe(username) {
   me = username;
   chrome.storage.local.set({ [ME_KEY]: username }).catch(() => {});
@@ -139,6 +196,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg?.type === "IG_CONTEXT") {
     contextByTab[tabId] = msg.context;
+    if (msg.context?.kind === "profile") ensureProfile(msg.context.username, tabId);
     chrome.runtime.sendMessage(
       { type: "CONTEXT_CHANGED", context: msg.context },
       () => void chrome.runtime.lastError
@@ -178,6 +236,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "SET_ME") {
     setMe(msg.username);
     sendResponse({ ok: true, me });
+    return true;
+  }
+
+  if (msg?.type === "GET_WATCH") {
+    (async () => {
+      const d = await chrome.storage.local.get(DIGEST_KEY);
+      sendResponse({
+        watch: await getWatch(),
+        crawl: crawler.state,
+        digest: d[DIGEST_KEY] || null,
+      });
+    })();
+    return true;
+  }
+
+  if (msg?.type === "SET_WATCH") {
+    setWatch(msg.patch).then((w) => sendResponse({ ok: true, watch: w }));
+    return true;
+  }
+
+  if (msg?.type === "RUN_SWEEP") {
+    (async () => {
+      const watch = await getWatch();
+      const names = msg.usernames?.length ? msg.usernames : watch.usernames;
+      if (!names.length) return sendResponse({ ok: false, error: "Ro'yxat bo'sh" });
+      sendResponse({ ok: true, started: names });
+      runSweep(names, false);       // continues after the response
+    })();
+    return true;
+  }
+
+  if (msg?.type === "CANCEL_SWEEP") {
+    crawler.cancel();
+    sendResponse({ ok: true });
     return true;
   }
 
@@ -222,3 +314,97 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 });
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
+// --- autonomous competitor sweep -------------------------------------------
+
+const crawler = new Crawler(
+  () => store,
+  (s) =>
+    chrome.runtime.sendMessage({ type: "CRAWL_PROGRESS", crawl: s }, () => void chrome.runtime.lastError)
+);
+
+async function getWatch() {
+  const v = await chrome.storage.local.get(WATCH_KEY);
+  return v[WATCH_KEY] || { usernames: [], hour: 9, minute: 0, enabled: false };
+}
+
+async function setWatch(patch) {
+  const next = { ...(await getWatch()), ...patch };
+  await chrome.storage.local.set({ [WATCH_KEY]: next });
+  await rescheduleAlarm(next);
+  return next;
+}
+
+async function rescheduleAlarm(watch) {
+  await chrome.alarms.clear(ALARM);
+  if (!watch.enabled || !watch.usernames.length) return;
+
+  // Next occurrence of the chosen local time.
+  const when = new Date();
+  when.setHours(watch.hour, watch.minute, 0, 0);
+  if (when.getTime() <= Date.now()) when.setDate(when.getDate() + 1);
+
+  chrome.alarms.create(ALARM, { when: when.getTime(), periodInMinutes: 24 * 60 });
+  console.info("[ReelSense] daily sweep scheduled for", when.toString());
+}
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== ALARM) return;
+  await ready;
+  const watch = await getWatch();
+  if (!watch.enabled || !watch.usernames.length) return;
+  await runSweep(watch.usernames, true);
+});
+
+/** Visit every watched profile, then ask the backend what changed. */
+async function runSweep(usernames, notify = false) {
+  await crawler.run(usernames);
+
+  const digest = { at: Date.now(), competitors: [], error: null };
+  try {
+    const mine = me ? snapshot(me) : null;
+    for (const username of usernames) {
+      const them = snapshot(username);
+      if (!them?.reels?.length) continue;
+      const entry = { username, reels: them.reels.length, report: null };
+
+      if (mine?.reels?.length) {
+        const res = await fetch(`${API}/compare`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            me: { profile: mine.profile, reels: mine.reels },
+            them: { profile: them.profile, reels: them.reels },
+            them_comments: Object.values(them.comments || {}).flat().slice(0, 60),
+            lang: "uz",
+          }),
+        });
+        if (res.ok) entry.report = await res.json();
+      }
+      digest.competitors.push(entry);
+    }
+  } catch (e) {
+    digest.error = String(e);
+  }
+
+  await chrome.storage.local.set({ [DIGEST_KEY]: digest });
+  chrome.runtime.sendMessage({ type: "DIGEST_READY", digest }, () => void chrome.runtime.lastError);
+
+  if (notify) {
+    const n = digest.competitors.length;
+    chrome.notifications?.create({
+      type: "basic",
+      // Inline so the notification never fails on a missing asset.
+      iconUrl:
+        "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgiIGhlaWdodD0iMTI4Ij48cmVjdCB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCIgcng9IjI4IiBmaWxsPSIjZDYyOTc2Ii8+PHRleHQgeD0iNjQiIHk9Ijg2IiBmb250LXNpemU9IjcwIiBmb250LWZhbWlseT0iSGVsdmV0aWNhLEFyaWFsIiBmaWxsPSIjZmZmIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5SPC90ZXh0Pjwvc3ZnPg==",
+      title: "ReelSense — kunlik tahlil tayyor",
+      message: n
+        ? `${n} ta raqobatchi yangilandi. Panelni oching.`
+        : "Yangi ma'lumot yig'ilmadi.",
+    }, () => void chrome.runtime.lastError);
+  }
+  return digest;
+}
+
+// Restore the schedule when the service worker wakes up.
+ready.then(async () => rescheduleAlarm(await getWatch()));
